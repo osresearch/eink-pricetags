@@ -7,7 +7,7 @@
 * E-Ink display, 128? x 256? pixels.
 * 2x CR2450 batteries in parallel
 
-![Back of the PCB](images/pcb-back.jpg)
+![Back of the PCB](images/pcb-rear.jpg)
 
 MSP430 "JTAG" is using the bottom four pins:
 
