@@ -91,18 +91,68 @@ SPI flash pins:
 Not 100% positive about model. Typically they are SPI controlled, plus
 some extra pins.  The pinout *appears* to match the waveshare design.
 
-* `EPD BUSY` - P2.5? (maybe?)
-* `EPD RESET`
+* `EPD BUSY` - P2.5? (based on busy wait sequence)
+* `EPD RESET` - P3.6? (based on init sequence, not measured)
 * `EPD DC` - P3.5? (data/command selector)
 * `EPD CS` - P3.4
 * `EPD CLK` - P2.3
-* `DI` - P2.4? (data out from mcu into e-ink)
-* ??? - P2.2
+* `DI` - P2.4 (data out from mcu into e-ink)
+* ??? - P3.1
+* ??? - P3.7
+* ??? - P2.6 and P2.7 (maybe some sort of transistor controlling the voltage regulators for the eink display?)
 
-Commands:
+Their init sequence:
 
-* 0x4E 0x00 - set X address to 0
-* 0x4F 0x00 - set Y address to 0
-* 0x24 .... - send bitmap data
+* P3.1 = 0 (power on?)
+* P3.6 = 0 (reset low)
+* delay(0x32)
+* P3.6 = 1 (reset high)
+* delay(0x12)
 * 0x12 - sw reset to all parameters (does not clear RAM)
-* 0x10 0x01 - deep sleep mode 1, requires hwreset to exit
+* wait for BUSY/P2.5 to go low
+
+* `0x01 0xF9 0x00` - driver output control, 
+* `0x3a 0x06` - set dummy line period
+* `0x3b 0x0b` - set gate line width
+* `0x11 0x03` - data entry mode X and Y increment, update X direction
+* `0x44 0x00 0x0f` - set ram X start and end
+* `0x45 0x00 0xf9` - set ram Y start and end (should be four bytes?)
+* `0x2c 0x79` - write VCOM register (maybe?)
+* `0x3c 0x33` - border waveform control, VSH2, LUT3?
+* `0x32 ....` LUT data? sends 30 bytes, datasheet says 100
+
+* `0x21 0x83` - display update control 1?
+
+* `0x4E 0x00` - set X address to 0
+* `0x4F 0x00` - set Y address to 0
+* `0x24 ....` - send bitmap data (reading from flash)
+* `0x22 0xc7` - display update control 2 (enable clock, analog, display mode 1, disable analog, osc)
+* `0x20` - active display update sequence (busy goes high)
+* wait for BUSY/P2.5 to go low
+* `0x10 0x01` - deep sleep mode 1, requires hwreset to exit
+* `P3DIR |= 0b11110010`
+* `P2DIR |= 0b00011000`
+* P2.3 = 1 (clk idle high)
+* P2.4 = 1 (data out idle high)
+* P3.4 = 1 (!cs, not selected)
+* P3.5 = 1 (command, idle high)
+* P3.6 = 1 (reset high)
+* P3.7 = 1
+* P3.1 = 0
+
+```
+eink_lut[1]                       XREF[1,  FUN_d56e:d57c(R), 
+                    eink_lut                                   FUN_d56e:d57c(R)  
+       c294 aa 65 55 8a    db[30]
+            16 66 65 18 
+            88 99 00 0
+         c294 [0]        AAh, 65h, 55h, 8Ah
+         c298 [4]        16h, 66h, 65h, 18h
+         c29c [8]        88h, 99h,  0h,  0h
+         c2a0 [12]        0h,  0h,  0h,  0h
+         c2a4 [16]       14h, 14h, 14h, 14h
+         c2a8 [20]       14h, 14h, 14h, 14h
+         c2ac [24]       14h, 14h,  0h,  0h
+         c2b0 [28]        0h,  2h
+```
+
