@@ -98,7 +98,7 @@ some extra pins.  The pinout *appears* to match the waveshare design.
 * `EPD CLK` - P2.3
 * `DI` - P2.4 (data out from mcu into e-ink)
 * ??? - P3.1
-* ??? - P3.7
+* ??? - P3.7 (maybe power control?)
 * ??? - P2.6 and P2.7 (maybe some sort of transistor controlling the voltage regulators for the eink display?)
 
 Their init sequence:
