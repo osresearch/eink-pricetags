@@ -5,8 +5,13 @@ CFLAGS=\
 	-O3 \
 	-std=c99 \
 	-mmcu=msp430g2553 \
+	-MMD \
+	-MF .$(notdir $@).d \
 
 all: epd
 
-epd: epd.c 
+epd: main.o epd.o 
+	$(CC) $(CFLAGS) -o $@ $^
+
+-include .*.d
 

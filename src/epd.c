@@ -4,10 +4,8 @@
 #include <msp430.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "epd.h"
 #include "pins.h"
-
-#define EPD_WIDTH	122
-#define EPD_HEIGHT	250
 
 #define EPD_POWER	0x31
 #define EPD_CS		0x34
@@ -40,7 +38,7 @@ static void epd_command(const uint8_t cmd)
 	epd_write(cmd);
 }
 
-static void epd_data(const uint8_t data)
+void epd_data(const uint8_t data)
 {
 	pin_write(EPD_DC, 1);
 	epd_write(data);
@@ -174,35 +172,4 @@ void epd_shutdown(void)
 
 	pin_write(EPD_RESET, 1);
 	pin_write(EPD_CS, 1);
-}
-
-int main(void)
-{
-	WDTCTL = WDTPW + WDTHOLD; // Stop WDT
-
-	epd_setup();
-	epd_reset();
-	epd_init();
-	epd_draw_start();
-
-/*
- * 1 == white, 0 == black
- * draw order is X first (122 across), 8 pixels at a time.
- * can change this with the incrment?
- */
-	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
-		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
-		{
-			if (((x >> 4) & 1) ^ ((y >> 4) & 1))
-				epd_data(0xFF);
-			else
-				epd_data(y);
-		}
-
-	epd_draw_end();
-
-	epd_shutdown();
-
-	while(1)
-		;
 }
