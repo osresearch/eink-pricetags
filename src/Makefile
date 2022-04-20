@@ -10,7 +10,7 @@ CFLAGS=\
 
 all: epd
 
-epd: main.o epd.o 
+epd: main.o epd.o font.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 -include .*.d
