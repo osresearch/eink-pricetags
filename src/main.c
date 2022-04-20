@@ -14,16 +14,22 @@ static void epd_checkerboard(void)
 	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
 		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
 		{
+			if (x < 64 && y < 32)
+				epd_data(0x00);
+			else
+				epd_data(0xFF);
+/*
 			if (((x >> 4) & 1) ^ ((y >> 4) & 1))
 				epd_data(0xFF);
 			else
 				epd_data(y);
+*/
 		}
 
 	epd_draw_end();
 }
 
-static const char msg[] = "Helloworld!";
+static const char msg[] = "Hello, world! 0123456789 This is a test.";
 static unsigned msg_i = 0;
 static uint8_t glyph_x = 0;
 static uint8_t msg_x = 0;
@@ -54,10 +60,11 @@ static uint8_t bitmap(unsigned y, unsigned x)
 	const uint8_t * const glyph = font[c - 0x20];
 	const uint8_t bitmap = glyph[glyph_x >> 2];
 
-	const uint8_t bit = (bitmap << ((y >> 4) & 7)) & 0x80;
+	const uint8_t bit = (bitmap >> ((y >> 4) & 7)) & 0x01;
 
 	return bit ? 0x00 : 0xFF;
 }
+
 
 int main(void)
 {
@@ -68,16 +75,22 @@ int main(void)
 	epd_init();
 
 	if (0)
-	epd_checkerboard();
+		while(1) epd_checkerboard();
+	else
 
 	// try to draw some text...
-	epd_draw_start();
-	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
-		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
-		{
-			epd_data(bitmap(x,y));
-		}
-	epd_draw_end();
+	while(1)
+	{
+		epd_draw_start();
+		for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
+			for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
+			{
+				epd_data(bitmap(x,y));
+			}
+		epd_draw_end();
+
+		//delay(1000);
+	}
 
 	epd_shutdown();
 
