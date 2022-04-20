@@ -18,8 +18,8 @@ static const port_t ports[] = {
 	{ &P3DIR, &P3IN, &P3OUT, },
 };
 
-#define EPD_WIDTH	250
-#define EPD_HEIGHT	122
+#define EPD_WIDTH	122
+#define EPD_HEIGHT	250
 
 #define EPD_POWER	0x31
 #define EPD_CS		0x34
@@ -144,7 +144,7 @@ static const uint8_t epd_lut[] = {
      0xAA, 0x65, 0x55, 0x8A, 0x16, 0x66, 0x65, 0x18, 0x88, 0x99,
      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
      0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14,
-     0x00, 0x00, 0x00, 0x2,
+     0x00, 0x00, 0x00, 0x02,
 };
 
 
@@ -152,7 +152,7 @@ void epd_init(void)
 {
 	// driver output control
 	epd_command(0x01);
-	epd_data(0xF9);
+	epd_data(0xF9); // 250 y values?
 	epd_data(0x00);
 
 	// set dummy line period
@@ -170,12 +170,12 @@ void epd_init(void)
 	// set ram X start and end?
 	epd_command(0x44);
 	epd_data(0x00);
-	epd_data(0x0f);
+	epd_data(0x0f); // 0..15, 8 pixels per byte == ~128 pixels
 
 	// set ram Y start and end
 	epd_command(0x45);
 	epd_data(0x00);
-	epd_data(0xf9);
+	epd_data(0xf9); // 0..249
 
 	// write VCOM register?
 	epd_command(0x2c);
@@ -241,9 +241,19 @@ int main(void)
 	epd_init();
 	epd_draw_start();
 
+/*
+ * 1 == white, 0 == black
+ * draw order is X first (122 across), 8 pixels at a time.
+ * can change this with the incrment?
+ */
 	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
 		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
-			epd_data(x^y);
+		{
+			if (((x >> 4) & 1) ^ ((y >> 4) & 1))
+				epd_data(0xFF);
+			else
+				epd_data(y);
+		}
 
 	epd_draw_end();
 
