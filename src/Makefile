@@ -10,8 +10,11 @@ CFLAGS=\
 
 all: epd
 
-epd: main.o epd.o font.o
+epd: main.o epd.o font.o radio.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 -include .*.d
+
+clean:
+	$(RM) *.o a.out core epd
 

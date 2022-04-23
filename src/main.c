@@ -2,6 +2,11 @@
 #include <stdint.h>
 #include "epd.h"
 
+
+// incremented once per second
+static volatile uint32_t timer;
+
+
 static void epd_checkerboard(void)
 {
 	epd_draw_start();
@@ -26,10 +31,10 @@ static void epd_checkerboard(void)
 */
 		}
 
-	epd_draw_end();
+	epd_display();
 }
 
-static const char msg[] = "Hello, world! 0123456789 This is a test.";
+static char msg[16];
 static unsigned msg_i = 0;
 static uint8_t glyph_x = 0;
 static uint8_t msg_x = 0;
@@ -65,35 +70,76 @@ static uint8_t bitmap(unsigned y, unsigned x)
 	return bit ? 0x00 : 0xFF;
 }
 
+void draw_msg(void)
+{
+	epd_setup();
+	epd_reset();
+	epd_init();
+
+	// try to draw some text...
+	epd_draw_start();
+	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
+		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
+		{
+			epd_data(bitmap(x,y));
+		}
+	epd_display();
+	epd_shutdown();
+}
+
+static char hexdigit(unsigned x)
+{
+	x &= 0xF;
+	if (x <= 9)
+		return '0' + x;
+	else
+		return 'A' + x - 0xa;
+}
+
 
 int main(void)
 {
 	WDTCTL = WDTPW + WDTHOLD; // Stop WDT
 
-	epd_setup();
-	epd_reset();
-	epd_init();
+	// turn off the radio
+	radio_init();
 
-	if (0)
-		while(1) epd_checkerboard();
-	else
+	BCSCTL3 = LFXT1S_2; // select VLO as the ACLK (used by the WDT)
+	WDTCTL = WDT_ADLY_1000;
+	IE1 |= WDTIE;
+	__enable_interrupt(); // GIE not set in LPM3 bits?
 
-	// try to draw some text...
 	while(1)
 	{
-		epd_draw_start();
-		for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
-			for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
-			{
-				epd_data(bitmap(x,y));
-			}
-		epd_draw_end();
+		LPM3;
 
-		//delay(1000);
+/*
+		if ((timer & 0x7) != 0)
+			continue;
+*/
+
+		short i = 0;
+		msg[i++] = '=';
+		msg[i++] = hexdigit(timer >> 28);
+		msg[i++] = hexdigit(timer >> 24);
+		msg[i++] = hexdigit(timer >> 20);
+		msg[i++] = hexdigit(timer >> 16);
+		msg[i++] = hexdigit(timer >> 12);
+		msg[i++] = hexdigit(timer >>  8);
+		msg[i++] = hexdigit(timer >>  4);
+		msg[i++] = hexdigit(timer >>  0);
+		msg[i++] = '!';
+
+		glyph_x = msg_i = msg_x = 0;
+		draw_msg();
 	}
-
-	epd_shutdown();
-
-	while(1)
-		;
 }
+
+
+void __attribute__((interrupt(WDT_VECTOR)))
+watchdog_timer(void)
+{
+	timer++;
+	LPM3_EXIT;
+}
+
