@@ -11,7 +11,7 @@ typedef struct {
 } port_t;
 
 static const port_t ports[] = {
-	{ NULL, NULL, NULL },
+	{ (void*)0, (void*)0, (void*)0 },
 	{ &P1DIR, &P1IN, &P1OUT, },
 	{ &P2DIR, &P2IN, &P2OUT, },
 	{ &P3DIR, &P3IN, &P3OUT, },
