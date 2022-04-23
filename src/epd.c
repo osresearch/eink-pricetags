@@ -1,5 +1,8 @@
 /*
  * Cheap price tag E-Ink display.
+ * Pinout was determined experimentally, so it may not be accurate.
+ * P2.6 appears to go to a transistor that might switch things on or off,
+ * P3.1 must be driven low to talk to the display, maybe it also switches power?
  */
 #include <msp430.h>
 #include <stdio.h>
@@ -7,11 +10,12 @@
 #include "epd.h"
 #include "pins.h"
 
-#define EPD_POWER	0x31
+#define EPD_POWER	0x31 // I think this is !power, but not sure
 #define EPD_CS		0x34
 #define EPD_DC		0x35
 #define EPD_RESET	0x36
-#define EPD_37		0x37
+#define EPD_37		0x37 // not sure
+#define EPD_26		0x26 // not sure
 
 #define EPD_BUSY	0x25
 #define EPD_CLK		0x23
@@ -51,31 +55,29 @@ void epd_data(const uint8_t data)
 
 void epd_setup(void)
 {
-	// copied from 0xecc6
-	pin_ddr(EPD_RESET, 1);
-	pin_write(EPD_RESET, 0);
-	delay(0x32);
-	pin_write(EPD_RESET, 1);
-
 	// P3 1, 4, 5, 7 are output
+	pin_ddr(EPD_RESET, 1);
 	pin_ddr(EPD_POWER, 1);
 	pin_ddr(EPD_CS, 1);
 	pin_ddr(EPD_DC, 1);
-	pin_ddr(EPD_37, 1);
-
-	pin_write(EPD_POWER, 0);
+	//pin_ddr(EPD_37, 1);
 
 	// P2 3 and 4 are output, 5 is input
 	pin_ddr(EPD_CLK, 1);
 	pin_ddr(EPD_DATA, 1);
 	pin_ddr(EPD_BUSY, 0); // input
+
+/*
+	// p2.6 is driven to 0 during startup? 0xf90e
+	pin_ddr(EPD_26, 1);
+	pin_write(EPD_26, 0);
+*/
 }
 
 
 void epd_reset(void)
 {
-	// copied from 0xd628
-	pin_write(EPD_POWER, 0);
+	pin_write(EPD_POWER, 0); // switch on transistor
 	pin_write(EPD_RESET, 0);
 	delay(0x32);
 	pin_write(EPD_RESET, 1);
@@ -153,31 +155,27 @@ void epd_init(void)
 
 	// set dummy line period
 	epd_command(0x3a);
-	epd_data(0x06);
+	//epd_data(0x06);
+	epd_data(0x1a); // 4 dummy lines per gate
 
 	// set gate line width
 	epd_command(0x3b);
-	epd_data(0x0b);
+	//epd_data(0x0b);
+	epd_data(0x04); // 2 usec per line
 
 	// data entry mode X+ and Y- , update X direction
 	epd_command(0x11);
 	epd_data(0x01);
 
-	// set ram X start and end, 8-pixels per byte, rounded up
-	epd_command(0x44);
-	epd_data(0x00);
-	epd_data((EPD_WIDTH >> 3) & 0xFF);
-
-	// set ram Y start at the high value and ending at 0
-	epd_command(0x45);
-	epd_data((EPD_HEIGHT >> 0) & 0xFF);
-	epd_data((EPD_HEIGHT >> 8) & 0xFF);
-	epd_data(0x00);
-	epd_data(0x00);
-
 	// write VCOM register?
 	epd_command(0x2c);
 	epd_data(0x79);
+
+	// booster soft start control?
+	epd_command(0x0C);
+	epd_data(0xD7);
+	epd_data(0xD6);
+	epd_data(0x9D);
 
 	// border waveform control? vsh2? lut3?
 	epd_command(0x3c);
@@ -204,28 +202,50 @@ void epd_init(void)
 	epd_data(0x83);
 }
 
-void epd_draw_start(void)
+void epd_set_frame(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
+	// x and w must be multiples of 8
+	uint16_t y_end = y + h - 1;
+	uint16_t x_end = x + w - 1;
+
+	// set ram X start and end, 8-pixels per byte, rounded up
+	epd_command(0x44);
+	epd_data((x >> 3) & 0xFF);
+	epd_data((x_end >> 3) & 0xFF);
+
+	// set ram Y start at the high value and ending at 0
+	epd_command(0x45);
+	epd_data((y_end >> 0) & 0xFF);
+	epd_data((y_end >> 8) & 0xFF);
+	epd_data((y >> 0) & 0xFF);
+	epd_data((y >> 8) & 0xFF);
+
 	// set X address to 0
 	epd_command(0x4e);
-	epd_data(0x00);
+	epd_data(x >> 3);
 
 	// set y address to max
 	epd_command(0x4f);
-	//epd_data(0x00);
-	//epd_data(0x00);
-	epd_data((EPD_HEIGHT >> 0) & 0xFF);
-	epd_data((EPD_HEIGHT >> 8) & 0xFF);
+	epd_data((y_end >> 0) & 0xFF);
+	epd_data((y_end >> 8) & 0xFF);
 
+	epd_wait_busy();
+
+	// start the drawing... data follows
 	epd_command(0x24);
-	// ... data follows
 }
 
-void epd_draw_end(void)
+void epd_draw_start(void)
+{
+	epd_set_frame(0, 0, EPD_WIDTH, EPD_HEIGHT);
+}
+
+void epd_display(void)
 {
 	// display update control 2 (enable clock, analog, display mode 1)
 	epd_command(0x22);
-	epd_data(0xc7);
+	//epd_data(0xc4);
+	epd_data(0xc4);
 
 	// activate display update sequence (busy goes high)
 	epd_command(0x20);
@@ -254,4 +274,20 @@ void epd_shutdown(void)
 
 	pin_write(EPD_RESET, 1);
 	pin_write(EPD_CS, 1);
+
+	// power off the e-ink display?
+	pin_write(EPD_POWER, 1);
+/*
+	// sequence in their code
+	P3DIR |= 0xF2;
+	P2DIR |= 0x18;
+	P2DIR &= ~0x20;
+	P2OUT |= 0x08;
+	P2OUT |= 0x10;
+	P3OUT |= 0x10;
+	P3OUT |= 0x20;
+	P3OUT |= 0x40;
+	P3OUT |= 0x80;
+	P3OUT &= ~0x02;
+*/
 }
