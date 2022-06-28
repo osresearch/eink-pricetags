@@ -42,13 +42,17 @@ static inline uint8_t pin_read(const uint8_t port)
 {
 	const port_t * const p = &ports[(port >> 4) & 0x3];
 	const uint8_t mask = 1 << (port & 0x7);
-	return *p->in & mask;
+	return (*p->in & mask) != 0;
 }
 
 /*
  * Create a spi_write function for a specific pin and clock.
  * Should be called with compile time constants for the data port
- * and clock port.  If in_port is zero, no value will be read.
+ * and clock port.
+ *
+ * If out_port is zero, no value will be written.
+ * If in_port is zero, no value will be read.
+ *
  */
 static inline uint8_t spi_write(
 	const uint8_t clk_port,
@@ -61,7 +65,9 @@ static inline uint8_t spi_write(
 
 	for(uint8_t mask = 0x80 ; mask != 0 ; mask >>= 1)
 	{
-		pin_write(out_port, out_value & mask);
+		if (out_port)
+			pin_write(out_port, out_value & mask);
+
 		pin_write(clk_port, 1);
 
 		if (in_port)
