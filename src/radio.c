@@ -13,7 +13,6 @@
  * TX @ 0dBm = 19 mA
  * RX = 16 mA
  *
- * ID code is matched based on 
  */
 
 #include "pins.h"
@@ -34,6 +33,7 @@
 
 #define BIT(x) ((const uint8_t)(1 << (x)))
 
+// when reading a register, this bit is set in the command byte
 #define RADIO_READ_BIT BIT(6)
 
 // calibration control register
@@ -47,6 +47,14 @@
 #define A7106_REG_FIFO 0x05
 
 #define A7106_REG_ID 0x06
+
+#define A7106_REG_RCOSC1 0x07
+#define A7106_REG_RCOSC2 0x08
+#define A7106_REG_RCOSC3 0x09
+#define A7106_REG_RCOSC3_CALW BIT(3)
+#define A7106_REG_RCOSC3_EN BIT(2)
+#define A7106_REG_RCOSC3_TSEL BIT(1)
+#define A7106_REG_RCOSC3_WORMS BIT(0)
 
 #define A7106_REG_IF_CALIBRATION1 0x22
 #define A7106_REG_IF_CALIBRATION1_MFBS	BIT(4) // write
@@ -62,16 +70,41 @@
 #define A7106_REG_VCO_BAND_CALIBRATION_MVBS BIT(3) // write
 #define A7106_REG_VCO_BAND_CALIBRATION_VBCF BIT(3) // read
 
+#define A7106_REG_CHARGE_PUMP 0x2b
+#define A7106_REG_CHARGE_PUMP_CPC0 BIT(0)
+#define A7106_REG_CHARGE_PUMP_CPC1 BIT(1)
+#define A7106_REG_CHARGE_PUMP_LVR BIT(2)
+#define A7106_REG_CHARGE_PUMP_STS BIT(3)
+#define A7106_REG_CHARGE_PUMP_RGC0 BIT(4)
+#define A7106_REG_CHARGE_PUMP_RGC1 BIT(5)
+#define A7106_REG_CHARGE_PUMP_CELS BIT(6)
+#define A7106_REG_CHARGE_PUMP_ROSCS BIT(7)
 
-static void radio_write(uint8_t byte)
+volatile uint8_t radio_status;
+
+/*
+ * busy loop delay, with their constant.
+ */
+static void delay(uint16_t loops)
 {
-	pin_ddr(RADIO_SDIO, 1);
+	for(uint16_t i = 0 ; i < loops ; i++)
+		for(uint16_t j = 0 ; j < 0x1D1 ; j++)
+			__asm__("");
+}
+
+/*
+ * The radio is used in a three-wire mode, where the SDIO pin
+ * switches directions for a read command.
+ * This means that simultaneous bi-directional data is not supported,
+ * although none of the protocol requires it.
+ */
+static void radio_write_byte(uint8_t byte)
+{
 	spi_write(RADIO_SCK, RADIO_SDIO, 0, byte);
 }
 
-static uint8_t radio_read(void)
+static uint8_t radio_read_byte(void)
 {
-	pin_ddr(RADIO_SDIO, 0);
 	return spi_write(RADIO_SCK, 0, RADIO_SDIO, 0);
 }
 
@@ -83,7 +116,7 @@ static void radio_cs(uint8_t selected)
 static void radio_strobe(const uint8_t cmd)
 {
 	radio_cs(1);
-	radio_write(cmd);
+	radio_write_byte(cmd);
 	radio_cs(0);
 }
 
@@ -91,19 +124,27 @@ static void radio_reg_write_buf(const uint8_t cmd, const uint8_t * data, const u
 {
 	// should confirm that cmd doesn't have bit 7 set
 	radio_cs(1);
-	radio_write(cmd & ~RADIO_READ_BIT);
+	pin_ddr(RADIO_SDIO, 1);
+	radio_write_byte(cmd & ~RADIO_READ_BIT);
+
 	for(unsigned i = 0 ; i < len ; i++)
-		radio_write(data[i]);
+		radio_write_byte(data[i]);
+
 	radio_cs(0);
 }
 
 static void radio_reg_read_buf(const uint8_t cmd, uint8_t * data, const unsigned len)
 {
-	// should confirm that cmd doesn't have bit 7 set
 	radio_cs(1);
-	radio_write(cmd | RADIO_READ_BIT);
+	pin_ddr(RADIO_SDIO, 1);
+	radio_write_byte(cmd | RADIO_READ_BIT);
+
+	// use the same pin for input
+	pin_ddr(RADIO_SDIO, 0);
 	for(unsigned i = 0 ; i < len ; i++)
-		data[i] = radio_read();
+		data[i] = radio_read_byte();
+
+	pin_ddr(RADIO_SDIO, 1);
 	radio_cs(0);
 }
 
@@ -141,46 +182,80 @@ static uint8_t radio_reg_read(const uint8_t cmd)
  */
 volatile uint32_t spins = 0;
 
-void radio_calibrate(void)
+static int radio_calibrate(void)
 {
  	// 3. Set A7106 in PLL mode.
 	radio_strobe(RADIO_CMD_PLL);
+	delay(400);
 
 	// 4. Enable IF Filter Bank (set FBC, RSSC=1), VCO Current (VCC=1), and VCO Bank (VBC=1).
 	radio_reg_write(A7106_REG_CALC, 0
-		| A7106_REG_CALC_RSSC
 		| A7106_REG_CALC_VCC
 		| A7106_REG_CALC_VBC
 		| A7106_REG_CALC_FBC
 	);
 
 	// 5. After calibration done, FBC, VCC and VBC is auto clear.
-	// todo: timeout if this fails
-	while(radio_reg_read(A7106_REG_CALC) != 0)
-		spins++;
+	for(unsigned count = 200 ; count != 0 ; count--)
+	{
+		if (radio_reg_read(A7106_REG_CALC) == 0)
+			break;
+		if (count == 0)
+		{
+			radio_status = 1;
+			return 0;
+		}
+	}
 
 	// 6. Check pass or fail by reading calibration flag (FBCF) and (VCCF, VBCF).
 	if (radio_reg_read(A7106_REG_IF_CALIBRATION1) & A7106_REG_IF_CALIBRATION1_FBCF)
 	{
-		spins = 0x999;
-		//while(1)
-			//;
+		radio_status = 2;
+		return 0;
 	}
 
 	if (radio_reg_read(A7106_REG_VCO_CURRENT_CALIBRATION) & A7106_REG_VCO_CURRENT_CALIBRATION_VCCF)
 	{
-		spins = 0x888;
-		while(1)
-			;
+		radio_status = 3;
+		return 0;
 	}
 
 	if (radio_reg_read(A7106_REG_VCO_BAND_CALIBRATION) & A7106_REG_VCO_BAND_CALIBRATION_VBCF)
 	{
-		spins = 0x777;
-		while(1)
-			;
+		radio_status = 4;
+		return 0;
 	}
+
+	return 1;
 }
+
+
+/* Chapter 20.1
+ * 1. Set A7106 in standby mode.
+ * 2. Select either GIO1 or GIO2 pin to wake up MCU.
+ * (2-1) Set GIO1S [3:0] = [0100] to let WAK from GIO1.
+ * (2-2) Set GIO2S [3:0] = [0100] to let WAK from GIO2.
+ * 3. Set period of WOR_AC (08h) and WOR_SL (07h and 08h).
+ * 4. Enable RCO Calibration: set RCOT = 1, RCOSC_E = 1, CALW = 1, WOR_MS =0(09h).
+ * 5. Check if CALR = 0 (07h), calibration done.
+ * 6. Read RCOC[6:0] (07h)
+ * (6-1) If RCOC >= 0x14, go to STEP7.
+ * (6-2) If RCOC < 0x14, Increase RCOT [1:0] by 1, then, go to STEP4 until RCOC [6:0] >= 0x14.
+ * 7. Enable WORE = 1 (01h).
+ * 8. Once a packet is received, GIO1 or GIO2 pin outputs WAK to wake up MCU.
+ * 9. A7106 will end up WOR function and stay in sleep mode.
+ */
+static int radio_osc_setup(void)
+{
+	for(unsigned i = 0 ; i < 4 ; i++)
+	{
+		radio_reg_write(A7106_REG_RCOSC3, 0);
+		radio_reg_write(A7106_REG_RCOSC3, (i << 4) | A7106_REG_RCOSC3_CALW | A7106_REG_RCOSC3_TSEL);
+	}
+
+	return 0;
+}
+
 
 uint8_t id[9];
 
@@ -192,6 +267,56 @@ void radio_tx_buf(const uint8_t *buf, const unsigned len)
 	delay(10);
 }
 
+// todo: document these registers and their bits
+static const uint8_t radio_init_cmd[] = {
+	0x01, 0x62,
+	0x03, 0x3f,
+	0x04, 0x40,
+	0x07, 0xff,
+	0x08, 0xcb,
+	0x09, 0x00,
+	0x0a, 0x00,
+	0x0b, 0x01,
+	0x0c, 0x13,
+	0x0d, 0x05,
+	0x0e, 0x00,
+	0x0f, 0x64,
+	0x10, 0x9e,
+	0x11, 0x4b,
+	0x12, 0x00,
+	0x13, 0x02,
+	0x14, 0x16,
+	0x15, 0x2b,
+	0x16, 0x12,
+	0x17, 0x40,
+	0x18, 0x62,
+	0x19, 0x80,
+	0x1a, 0x80,
+	0x1b, 0x00,
+	0x1c, 0x0a,
+	0x1d, 0x32,
+	0x1e, 0xc3,
+	0x1f, 0x0f,
+	0x20, 0x12,
+	0x21, 0x00,
+	0x22, 0x00,
+	0x24, 0x0f,
+	0x25, 0x00,
+	0x26, 0x23,
+	0x27, 0x70,
+	0x28, 0x1f,
+	0x29, 0x47,
+	0x2a, 0x80,
+	0x2b, 0x77,
+	0x2c, 0x01,
+	0x2d, 0x45,
+	0x2e, 0x19,
+	0x2f, 0x00,
+	0x30, 0x01,
+	0x31, 0x0f,
+	0x33, 0x7f,
+};
+
 void radio_init(void)
 {
 	pin_ddr(RADIO_SDIO, 1);
@@ -200,47 +325,57 @@ void radio_init(void)
 
 	pin_write(RADIO_SCS, 1);
 
-	radio_strobe(RADIO_CMD_IDLE);
+	// force a reset
+	radio_reg_write(0,0);
+	delay(200);
 
-	memset(id, 0xAF, sizeof(id));
-	id[7] = radio_reg_read(0x0A);
+	// try writing to the id
+	id[0] = 0x55;
+	id[1] = 0xaa;
+	id[2] = 0x01;
+	id[3] = 0x10;
+	radio_reg_write_buf(A7106_REG_ID, id, 4);
+	radio_reg_read_buf(A7106_REG_ID, id+4, 4);
 
-	static const uint8_t buf[] = { 0x55, 0xAB, 0x12, 0x13 };
-	radio_reg_write_buf(A7106_REG_ID, buf, sizeof(buf));
-	radio_reg_read_buf(A7106_REG_ID, id, 4);
+	// there is something weird in this value; not sure if docs are right
+	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
+		| A7106_REG_CHARGE_PUMP_LVR // shall be set to 1
+		| A7106_REG_CHARGE_PUMP_CPC1 // 11 == 2.0mA
+		| A7106_REG_CHARGE_PUMP_CPC0
+		| A7106_REG_CHARGE_PUMP_CELS // shall be set to 1
+		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
+		| A7106_REG_CHARGE_PUMP_RGC0 // shall be set to 0, but is set?
+	);
 
-	//return;
+	// send all of our initial register states
+	for(unsigned i = 0 ; i < sizeof(radio_init_cmd) ; i+=2)
+		radio_reg_write(radio_init_cmd[i+0], radio_init_cmd[i+1]);
 
-	radio_calibrate();
+	// charge pump current register; normal value
+	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
+		| A7106_REG_CHARGE_PUMP_LVR // shall be set to 1
+		| A7106_REG_CHARGE_PUMP_CPC1 // 11 == 2.0mA
+		| A7106_REG_CHARGE_PUMP_CPC0
+		| A7106_REG_CHARGE_PUMP_CELS // shall be set to 1
+		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
+	);
 
-	// try transmitting?
-	uint8_t msg[12];
-	msg[0] = 0xAA;
-	msg[1] = 0xAA;
-	msg[2] = 0xAA;
-	msg[3] = 0xAA;
-	msg[4] = 0xA0;
-	msg[5] = 0x0A;
-	msg[6] = 0x5A;
-	msg[7] = 0xA5;
-	msg[8] = 0x00;
-	msg[9] = 0x00;
-	msg[10] = 0x00;
-	msg[11] = 0x00;
-
-	while(1)
+	if (!radio_calibrate()
+	&&  !radio_calibrate()
+	&&  !radio_calibrate())
 	{
-		radio_strobe(RADIO_CMD_IDLE);
-
-		radio_tx_buf(msg, 64);
-		msg[11]++;
-		radio_tx_buf(msg, 64);
-		msg[11]++;
-		radio_tx_buf(msg, 64);
-		msg[11]++;
-
-		delay(20);
-		radio_strobe(RADIO_CMD_SLEEP);
-		delay(50);
+		// we tried.  we really tried.
+		return;
 	}
+
+	delay(1000);
+
+	// wake on radio is not yet configured, so it is not calibrated
+	if (0)
+	if (!radio_osc_setup())
+		return;
+
+	// radio is ready!
+	radio_status = 0;
+
 }
