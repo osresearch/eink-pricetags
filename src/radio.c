@@ -17,9 +17,11 @@
 
 #include "pins.h"
 
+#define RADIO_IO2	0x10
+#define RADIO_IO1	0x11 // busy?
 #define RADIO_SDIO	0x12
-#define RADIO_SCK	0x14
 #define RADIO_SCS	0x13
+#define RADIO_SCK	0x14
 #define RADIO_POWER	0x27
 
 #define RADIO_CMD_SLEEP	0x80
@@ -44,7 +46,9 @@
 #define A7106_REG_CALC_FBC BIT(0)
 
 // RX and TX fifos
-#define A7106_REG_FIFO 0x05
+#define A7106_REG_FIFO_END 0x03
+#define A7106_REG_FIFO_SEGMENT 0x04
+#define A7106_REG_FIFO_DATA 0x05
 
 #define A7106_REG_ID 0x06
 
@@ -55,6 +59,12 @@
 #define A7106_REG_RCOSC3_EN BIT(2)
 #define A7106_REG_RCOSC3_TSEL BIT(1)
 #define A7106_REG_RCOSC3_WORMS BIT(0)
+
+#define A7106_REG_PLL1 0x0F
+#define A7106_REG_PLL2 0x10
+#define A7106_REG_PLL3 0x11
+#define A7106_REG_PLL4 0x12
+#define A7106_REG_PLL5 0x13
 
 #define A7106_REG_IF_CALIBRATION1 0x22
 #define A7106_REG_IF_CALIBRATION1_MFBS	BIT(4) // write
@@ -162,6 +172,7 @@ static uint8_t radio_reg_read(const uint8_t cmd)
 
 
 
+
 /*
  * 15. Calibration 
  * A7106 needs calibration process after power on reset or software reset by 3 calibration items,
@@ -180,8 +191,6 @@ static uint8_t radio_reg_read(const uint8_t cmd)
  * 5. After calibration done, FBC, VCC and VBC is auto clear.
  * 6. Check pass or fail by reading calibration flag (FBCF) and (VCCF, VBCF).
  */
-volatile uint32_t spins = 0;
-
 static int radio_calibrate(void)
 {
  	// 3. Set A7106 in PLL mode.
@@ -257,14 +266,45 @@ static int radio_osc_setup(void)
 }
 
 
-uint8_t id[9];
+uint8_t id[16];
+
+static void radio_channel(const uint8_t value)
+{
+	radio_reg_write(A7106_REG_PLL1, value);
+}
+
+static void radio_fifo_reset(const uint8_t len)
+{
+	radio_reg_write(A7106_REG_FIFO_END, len - 1);
+	radio_strobe(RADIO_CMD_WRITE_FIFO_RESET);
+	radio_strobe(RADIO_CMD_READ_FIFO_RESET);
+}
+
+static uint8_t radio_busy(void)
+{
+	// Port 1 pin 1 is mapped to the IO1 pin from the radio
+	return pin_read(RADIO_IO1);
+}
 
 void radio_tx_buf(const uint8_t *buf, const unsigned len)
 {
-	radio_reg_write_buf(A7106_REG_FIFO, buf, len);
+	radio_channel(0xA5); // maybe?
+
+	radio_fifo_reset(len);
+	radio_reg_write_buf(A7106_REG_FIFO_DATA, buf, len);
+
 	radio_strobe(RADIO_CMD_TX);
 
-	delay(10);
+	delay(1);
+
+	for(unsigned i = 0 ; i < 64 ; i++)
+	{
+		if (!radio_busy())
+			return;
+		delay(0x10);
+	}
+
+	radio_status = 0x99;
 }
 
 // todo: document these registers and their bits
@@ -276,8 +316,8 @@ static const uint8_t radio_init_cmd[] = {
 	0x08, 0xcb,
 	0x09, 0x00,
 	0x0a, 0x00,
-	0x0b, 0x01,
-	0x0c, 0x13,
+	0x0b, 0x01, // GIO1 pin control: TX End of access code / RX FSYNC
+	0x0c, 0x13, // GIO2 pin control: inverted output enabled, TMOE / CD
 	0x0d, 0x05,
 	0x0e, 0x00,
 	0x0f, 0x64,
@@ -378,4 +418,28 @@ void radio_init(void)
 	// radio is ready!
 	radio_status = 0;
 
+
+	// try doing some tx... build the preamble and destination id
+	id[0] = 0x55;
+	id[1] = 0x55;
+	id[2] = 0x55;
+	id[3] = 0x55;
+
+	id[4] = 0x50;
+	id[5] = 0xFF;
+	id[6] = 0x00;
+	id[7] = 0xFF;
+
+	uint32_t counter = 0;
+
+	while(1)
+	{
+		counter++;
+		id[8] = (counter >> 24) & 0xFF;
+		id[9] = (counter >> 16) & 0xFF;
+		id[10] = (counter >> 8) & 0xFF;
+		id[11] = (counter >> 0) & 0xFF;
+		radio_tx_buf(id, 12);
+		delay(100);
+	}
 }
