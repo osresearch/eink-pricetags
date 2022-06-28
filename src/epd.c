@@ -21,7 +21,7 @@
 #define EPD_CLK		0x23
 #define EPD_DATA	0x24
 
-void delay(unsigned count)
+static void delay(unsigned count)
 {
 	for(volatile unsigned i = 0 ; i < count ; i++)
 		for(volatile unsigned j = 0 ; j < 1000 ; j++)
