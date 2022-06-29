@@ -47,7 +47,7 @@
 
 // RX and TX fifos
 #define A7106_REG_FIFO_END 0x03
-#define A7106_REG_FIFO_SEGMENT 0x04
+#define A7106_REG_FIFO2 0x04
 #define A7106_REG_FIFO_DATA 0x05
 
 #define A7106_REG_ID 0x06
@@ -60,11 +60,20 @@
 #define A7106_REG_RCOSC3_TSEL BIT(1)
 #define A7106_REG_RCOSC3_WORMS BIT(0)
 
+#define A7106_REG_DATA_RATE 0x0e
 #define A7106_REG_PLL1 0x0F
 #define A7106_REG_PLL2 0x10
 #define A7106_REG_PLL3 0x11
 #define A7106_REG_PLL4 0x12
 #define A7106_REG_PLL5 0x13
+
+#define A7106_REG_CODE1 0x1f
+#define A7106_REG_CODE1_MCS BIT(6)
+#define A7106_REG_CODE1_WHTS BIT(5)
+#define A7106_REG_CODE1_FECS BIT(4)
+#define A7106_REG_CODE1_CRCS BIT(3)
+#define A7106_REG_CODE1_IDL BIT(2)
+#define A7106_REG_CODE1_PML (BIT(1) | BIT(0))
 
 #define A7106_REG_IF_CALIBRATION1 0x22
 #define A7106_REG_IF_CALIBRATION1_MFBS	BIT(4) // write
@@ -273,6 +282,29 @@ static void radio_channel(const uint8_t value)
 	radio_reg_write(A7106_REG_PLL1, value);
 }
 
+#define RADIO_SPEED_2 0xF9
+#define RADIO_SPEED_10 0x31
+#define RADIO_SPEED_25 0x09
+#define RADIO_SPEED_100 0x04
+#define RADIO_SPEED_125 0x03
+#define RADIO_SPEED_250 0x01
+#define RADIO_SPEED_500 0x00
+
+static void radio_speed(uint8_t speed, uint8_t fec, uint8_t crc)
+{
+	// speeds are 2, 50, 125, 250 or 500 Kbps
+	// default is 500 Kbps with a divisor of 1
+	// 16MHz input clock, GCS=0, DBL=1, CSC=01, RRC=00, CHR=1111
+	radio_reg_write(A7106_REG_DATA_RATE, speed);
+
+	radio_reg_write(A7106_REG_CODE1, 0
+		| (fec ? A7106_REG_CODE1_FECS : 0)
+		| (crc ? A7106_REG_CODE1_CRCS : 0)
+		| A7106_REG_CODE1_IDL
+		| A7106_REG_CODE1_PML
+	);
+}
+
 static void radio_fifo_reset(const uint8_t len)
 {
 	radio_reg_write(A7106_REG_FIFO_END, len - 1);
@@ -286,44 +318,71 @@ static uint8_t radio_busy(void)
 	return pin_read(RADIO_IO1);
 }
 
-void radio_tx_buf(const uint8_t *buf, const unsigned len)
+static uint8_t channel = 0;
+
+/* 16.4.1 Easy FIFO
+ * In Easy FIFO, max FIFO length is 64 bytes.
+ * FIFO length is equal to (FEP [7:0] +1).
+ * User just needs to control FEP [7:0] (03h) and disable PSA and FPM as shown below.
+ *
+ * Procedures of TX FIFO Transmitting
+ * 1. Initialize all control registers (refer to A7106 reference code).
+ * 2. Set FEP [7:0] = 0x3F for 64-bytes FIFO.
+ * 3. Refer to section 11.2 ~ 11.4.
+ * 4. Send Strobe command – TX FIFO write pointer reset.
+ * 5. MCU writes 64-bytes data to TX FIFO.
+ * 6. Send TX Strobe Command.
+ * 7. Done
+ */
+int radio_tx_buf(const uint8_t *buf, const unsigned len)
 {
-	radio_channel(0xA5); // maybe?
+/*
+	radio_channel(channel); // 2405.001?
+	channel = (channel + 1) & 0xF;
+*/
+	radio_channel(0x08); // 2404 = 2400 MHz + 8 * 500 KHz
+
+	radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
 
 	radio_fifo_reset(len);
 	radio_reg_write_buf(A7106_REG_FIFO_DATA, buf, len);
 
+	//delay(500);
 	radio_strobe(RADIO_CMD_TX);
+
+	//delay(1000);
 
 	delay(1);
 
-	for(unsigned i = 0 ; i < 64 ; i++)
+	//for(unsigned i = 0 ; i < 64 ; i++)
+	while(1)
 	{
 		if (!radio_busy())
-			return;
+			return 0;
 		delay(0x10);
 	}
 
 	radio_status = 0x99;
+	return -1;
 }
 
 // todo: document these registers and their bits
 static const uint8_t radio_init_cmd[] = {
 	0x01, 0x62,
 	0x03, 0x3f,
-	0x04, 0x40,
+	0x04, 0x40, // FIFO2: FPM=01 PSA=000000
 	0x07, 0xff,
 	0x08, 0xcb,
 	0x09, 0x00,
 	0x0a, 0x00,
 	0x0b, 0x01, // GIO1 pin control: TX End of access code / RX FSYNC
 	0x0c, 0x13, // GIO2 pin control: inverted output enabled, TMOE / CD
-	0x0d, 0x05,
-	0x0e, 0x00,
+	0x0d, 0x05, // Clock: GRC=0000 CSC=01 GCS=0 XS=1
+	0x0e, 0x00, // Data rate: no divisor
 	0x0f, 0x64,
-	0x10, 0x9e,
-	0x11, 0x4b,
-	0x12, 0x00,
+	0x10, 0x9e, // PLL2: DBL=1, RRC=00, CHR=1111
+	0x11, 0x4b, // PLL3: BIP = 0x4b => F_lobase == 2400 MHz
+	0x12, 0x00, // PLL4/5: BFP = 0x0002 => F_lobase == 2400.001 MHz
 	0x13, 0x02,
 	0x14, 0x16,
 	0x15, 0x2b,
@@ -335,9 +394,9 @@ static const uint8_t radio_init_cmd[] = {
 	0x1b, 0x00,
 	0x1c, 0x0a,
 	0x1d, 0x32,
-	0x1e, 0xc3,
-	0x1f, 0x0f,
-	0x20, 0x12,
+	0x1e, 0xc3, // ADC: defaults
+	0x1f, 0x0f, // CODE1: FECS=0 CRCS=1 IDL=1 PML=11
+	0x20, 0x12, // CODE2: DCL=0001 ETH=00 PMD=10
 	0x21, 0x00,
 	0x22, 0x00,
 	0x24, 0x0f,
@@ -357,13 +416,18 @@ static const uint8_t radio_init_cmd[] = {
 	0x33, 0x7f,
 };
 
+uint32_t counter = 0;
+uint32_t fails = 0;
+
 void radio_init(void)
 {
+	pin_ddr(RADIO_IO1, 0);
 	pin_ddr(RADIO_SDIO, 1);
 	pin_ddr(RADIO_SCK, 1);
 	pin_ddr(RADIO_SCS, 1);
 
 	pin_write(RADIO_SCS, 1);
+
 
 	// force a reset
 	radio_reg_write(0,0);
@@ -418,6 +482,8 @@ void radio_init(void)
 	// radio is ready!
 	radio_status = 0;
 
+	radio_speed(RADIO_SPEED_2, 1, 1);
+
 
 	// try doing some tx... build the preamble and destination id
 	id[0] = 0x55;
@@ -430,7 +496,6 @@ void radio_init(void)
 	id[6] = 0x00;
 	id[7] = 0xFF;
 
-	uint32_t counter = 0;
 
 	while(1)
 	{
@@ -439,7 +504,12 @@ void radio_init(void)
 		id[9] = (counter >> 16) & 0xFF;
 		id[10] = (counter >> 8) & 0xFF;
 		id[11] = (counter >> 0) & 0xFF;
-		radio_tx_buf(id, 12);
+		if (radio_tx_buf(id, 60))
+			fails++;
+
 		delay(100);
+		//radio_strobe(RADIO_CMD_SLEEP);
+		//delay(100);
+		//radio_strobe(RADIO_CMD_STBY);
 	}
 }
