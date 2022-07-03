@@ -38,6 +38,25 @@
 // when reading a register, this bit is set in the command byte
 #define RADIO_READ_BIT BIT(6)
 
+#define A7106_REG_MODE 0x00
+#define A7106_REG_MODE_FECF BIT(6)
+#define A7106_REG_MODE_CRCF BIT(5)
+#define A7106_REG_MODE_CER BIT(4)
+#define A7106_REG_MODE_XER BIT(3)
+#define A7106_REG_MODE_PLLER BIT(2)
+#define A7106_REG_MODE_TRSR BIT(1)
+#define A7106_REG_MODE_TRER BIT(0)
+
+#define A7106_REG_MODE_CONTROL 0x01
+#define A7106_REG_MODE_CONTROL_ADCM BIT(0)
+#define A7106_REG_MODE_CONTROL_FMS BIT(1)
+#define A7106_REG_MODE_CONTROL_FMT BIT(2)
+#define A7106_REG_MODE_CONTROL_WORE BIT(3)
+#define A7106_REG_MODE_CONTROL_CD BIT(4)
+#define A7106_REG_MODE_CONTROL_AIF BIT(5)
+#define A7106_REG_MODE_CONTROL_ARSSI BIT(7)
+#define A7106_REG_MODE_CONTROL_DDPC BIT(7)
+
 // calibration control register
 #define A7106_REG_CALC 0x02
 #define A7106_REG_CALC_RSSC BIT(3)
@@ -275,7 +294,7 @@ static int radio_osc_setup(void)
 }
 
 
-uint8_t id[16];
+uint8_t id[64];
 
 static void radio_channel(const uint8_t value)
 {
@@ -312,13 +331,23 @@ static void radio_fifo_reset(const uint8_t len)
 	radio_strobe(RADIO_CMD_READ_FIFO_RESET);
 }
 
+/*
+ * Port 1 pin 1 is mapped to the IO1 pin from the radio
+ * This is controlled by the GIO1 register.
+ * 0x0b, 0x01, // GIO1 pin control: TX End of access code / RX FSYNC
+ *
+ * In TX Mode, it goes high when transmitting and low when the packet is done.
+ *
+ * In RX mode, it outputs the FSYNC (Frame Sync) signal.
+ * FSYNC goes high when the ID code has been matched, and then low
+ * when the packet is complete.
+ */
+
 static uint8_t radio_busy(void)
 {
-	// Port 1 pin 1 is mapped to the IO1 pin from the radio
 	return pin_read(RADIO_IO1);
 }
 
-static uint8_t channel = 0;
 
 /* 16.4.1 Easy FIFO
  * In Easy FIFO, max FIFO length is 64 bytes.
@@ -340,10 +369,6 @@ int radio_tx_buf(const uint8_t *buf, const unsigned len)
 	radio_channel(channel); // 2405.001?
 	channel = (channel + 1) & 0xF;
 */
-	radio_channel(0x08); // 2404 = 2400 MHz + 8 * 500 KHz
-
-	radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
-
 	radio_fifo_reset(len);
 	radio_reg_write_buf(A7106_REG_FIFO_DATA, buf, len);
 
@@ -368,15 +393,17 @@ int radio_tx_buf(const uint8_t *buf, const unsigned len)
 
 // todo: document these registers and their bits
 static const uint8_t radio_init_cmd[] = {
-	0x01, 0x62,
+	//0x01, 0x62, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=1 ARSSI=1 DDPC=0
+	0x01, 0x42, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=0 ARSSI=1 DDPC=0
 	0x03, 0x3f,
 	0x04, 0x40, // FIFO2: FPM=01 PSA=000000
 	0x07, 0xff,
 	0x08, 0xcb,
 	0x09, 0x00,
 	0x0a, 0x00,
-	0x0b, 0x01, // GIO1 pin control: TX End of access code / RX FSYNC
-	0x0c, 0x13, // GIO2 pin control: inverted output enabled, TMOE / CD
+	0x0b, 0x01, // GIO1 pin control: WTR, non-inverted output enabled
+	0x0c, 0x13, // GIO2 pin control: WAK, inverted output enabled
+	//0x0c, 0x09, // GIO2 pin control: CD, inverted output enabled
 	0x0d, 0x05, // Clock: GRC=0000 CSC=01 GCS=0 XS=1
 	0x0e, 0x00, // Data rate: no divisor
 	0x0f, 0x64,
@@ -388,7 +415,7 @@ static const uint8_t radio_init_cmd[] = {
 	0x15, 0x2b,
 	0x16, 0x12,
 	0x17, 0x40,
-	0x18, 0x62,
+	0x18, 0x62, // rx: QDLS=0 RXSM=11 FC=0 RXDI=0 DMG=0 BWS=1 ULS=0
 	0x19, 0x80,
 	0x1a, 0x80,
 	0x1b, 0x00,
@@ -396,7 +423,7 @@ static const uint8_t radio_init_cmd[] = {
 	0x1d, 0x32,
 	0x1e, 0xc3, // ADC: defaults
 	0x1f, 0x0f, // CODE1: FECS=0 CRCS=1 IDL=1 PML=11
-	0x20, 0x12, // CODE2: DCL=0001 ETH=00 PMD=10
+	0x20, 0x12, // CODE2: DCL=001 ETH=00 PMD=10
 	0x21, 0x00,
 	0x22, 0x00,
 	0x24, 0x0f,
@@ -404,7 +431,7 @@ static const uint8_t radio_init_cmd[] = {
 	0x26, 0x23,
 	0x27, 0x70,
 	0x28, 0x1f,
-	0x29, 0x47,
+	0x29, 0x47, // RX DEM: DMT=0 DCM=10 MLP=00 SLF=111
 	0x2a, 0x80,
 	0x2b, 0x77,
 	0x2c, 0x01,
@@ -416,8 +443,9 @@ static const uint8_t radio_init_cmd[] = {
 	0x33, 0x7f,
 };
 
-uint32_t counter = 0;
-uint32_t fails = 0;
+volatile uint16_t radio_rx_count = 0;
+volatile uint16_t radio_rx_spin = 0;
+volatile uint16_t radio_rx_error = 0;
 
 void radio_init(void)
 {
@@ -482,9 +510,16 @@ void radio_init(void)
 	// radio is ready!
 	radio_status = 0;
 
-	radio_speed(RADIO_SPEED_2, 1, 1);
+	// slow down the radio and leave it in easy fifo mode
+	radio_speed(RADIO_SPEED_2, 0, 1);
+	radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
+
+	// 2404 = 2400 MHz + 8 * 500 KHz
+	// looks like maybe (G?)FSK at 2403.856 and 2404.219, ~360 Hz
+	radio_channel(0x08);
 
 
+#if 0
 	// try doing some tx... build the preamble and destination id
 	id[0] = 0x55;
 	id[1] = 0x55;
@@ -496,20 +531,69 @@ void radio_init(void)
 	id[6] = 0x00;
 	id[7] = 0xFF;
 
+	uint32_t counter =0;
 
 	while(1)
 	{
-		counter++;
-		id[8] = (counter >> 24) & 0xFF;
-		id[9] = (counter >> 16) & 0xFF;
-		id[10] = (counter >> 8) & 0xFF;
-		id[11] = (counter >> 0) & 0xFF;
-		if (radio_tx_buf(id, 60))
-			fails++;
+		for(unsigned i = 0 ; i < 32 ; i++)
+		{
+			counter++;
+			id[8] = (counter >> 24) & 0xFF;
+			id[9] = (counter >> 16) & 0xFF;
+			id[10] = (counter >> 8) & 0xFF;
+			id[11] = (counter >> 0) & 0xFF;
+			if (radio_tx_buf(id, 60))
+				radio_rx_error++;
+		}
 
-		delay(100);
+		delay(5000);
 		//radio_strobe(RADIO_CMD_SLEEP);
 		//delay(100);
 		//radio_strobe(RADIO_CMD_STBY);
 	}
+#else
+	// try doing some rx
+	while(1)
+	{
+		radio_fifo_reset(60);
+		radio_strobe(RADIO_CMD_RX);
+		delay(100);
+
+		// wait for WTR to go low, indicating rx complete
+		while(radio_busy())
+		{
+			radio_rx_spin++;
+			if (radio_reg_read(A7106_REG_MODE_CONTROL) & A7106_REG_MODE_CONTROL_CD)
+				
+				radio_rx_count++;
+		}
+
+/*
+		while(1)
+		{
+			uint8_t a = radio_busy();
+			delay(10);
+			uint8_t b = radio_busy();
+			if (a == 0 || b == 0)
+				break;
+			delay(10);
+		}
+*/
+		//radio_rx_count++;
+
+		// check the CRC and FEC registers
+		const uint8_t status = radio_reg_read(A7106_REG_MODE);
+		if (status & (A7106_REG_MODE_CRCF | A7106_REG_MODE_FECF))
+		{
+			// rx error!
+			radio_rx_error++;
+			continue;
+		}
+
+		// read in the message to our buffer
+		radio_reg_read_buf(A7106_REG_FIFO_DATA, id, 60);
+
+		radio_rx_count++;
+	}
+#endif
 }
