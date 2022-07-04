@@ -143,7 +143,7 @@ static void radio_write_byte(uint8_t byte)
 
 static uint8_t radio_read_byte(void)
 {
-	return spi_write(RADIO_SCK, 0, RADIO_SDIO, 0);
+	return spi_write(RADIO_SCK, 0, RADIO_IO1, 0);
 }
 
 static void radio_cs(uint8_t selected)
@@ -162,7 +162,7 @@ static void radio_reg_write_buf(const uint8_t cmd, const uint8_t * data, const u
 {
 	// should confirm that cmd doesn't have bit 7 set
 	radio_cs(1);
-	pin_ddr(RADIO_SDIO, 1);
+	//pin_ddr(RADIO_SDIO, 1);
 	radio_write_byte(cmd & ~RADIO_READ_BIT);
 
 	for(unsigned i = 0 ; i < len ; i++)
@@ -174,15 +174,15 @@ static void radio_reg_write_buf(const uint8_t cmd, const uint8_t * data, const u
 static void radio_reg_read_buf(const uint8_t cmd, uint8_t * data, const unsigned len)
 {
 	radio_cs(1);
-	pin_ddr(RADIO_SDIO, 1);
+	//pin_ddr(RADIO_SDIO, 1);
 	radio_write_byte(cmd | RADIO_READ_BIT);
 
 	// use the same pin for input
-	pin_ddr(RADIO_SDIO, 0);
+	//pin_ddr(RADIO_SDIO, 0);
 	for(unsigned i = 0 ; i < len ; i++)
 		data[i] = radio_read_byte();
 
-	pin_ddr(RADIO_SDIO, 1);
+	//pin_ddr(RADIO_SDIO, 1);
 	radio_cs(0);
 }
 
@@ -222,11 +222,19 @@ static uint8_t radio_reg_read(const uint8_t cmd)
 static int radio_calibrate(void)
 {
  	// 3. Set A7106 in PLL mode.
+	// radio_strobe(RADIO_CMD_PLL);
+
+        // Calibration 
+        radio_reg_write(0x22, 0x00); // Set MFBS = 0
+        radio_reg_write(0x24, 0x00); // Set MCVS = 0
+        radio_reg_write(0x25, 0x00); // Set MVBS = 0
 	radio_strobe(RADIO_CMD_PLL);
+
 	delay(400);
 
 	// 4. Enable IF Filter Bank (set FBC, RSSC=1), VCO Current (VCC=1), and VCO Bank (VBC=1).
 	radio_reg_write(A7106_REG_CALC, 0
+		| A7106_REG_CALC_RSSC
 		| A7106_REG_CALC_VCC
 		| A7106_REG_CALC_VBC
 		| A7106_REG_CALC_FBC
@@ -328,7 +336,7 @@ static void radio_fifo_reset(const uint8_t len)
 {
 	radio_reg_write(A7106_REG_FIFO_END, len - 1);
 	radio_strobe(RADIO_CMD_WRITE_FIFO_RESET);
-	radio_strobe(RADIO_CMD_READ_FIFO_RESET);
+	//radio_strobe(RADIO_CMD_READ_FIFO_RESET);
 }
 
 /*
@@ -345,7 +353,7 @@ static void radio_fifo_reset(const uint8_t len)
 
 static uint8_t radio_busy(void)
 {
-	return pin_read(RADIO_IO1);
+	return pin_read(RADIO_IO2);
 }
 
 
@@ -393,8 +401,9 @@ int radio_tx_buf(const uint8_t *buf, const unsigned len)
 
 // todo: document these registers and their bits
 static const uint8_t radio_init_cmd[] = {
-	//0x01, 0x62, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=1 ARSSI=1 DDPC=0
-	0x01, 0x42, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=0 ARSSI=1 DDPC=0
+#if 0
+	0x01, 0x62, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=1 ARSSI=1 DDPC=0
+	//0x01, 0x42, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=0 ARSSI=1 DDPC=0
 	0x03, 0x3f,
 	0x04, 0x40, // FIFO2: FPM=01 PSA=000000
 	0x07, 0xff,
@@ -441,6 +450,62 @@ static const uint8_t radio_init_cmd[] = {
 	0x30, 0x01,
 	0x31, 0x0f,
 	0x33, 0x7f,
+#else
+        0x00, 0x00, // Software reset
+        0x01, 0x62, // 0b01100010, // Enable auto RSSI measurement, disable RF IF shift, NOTE: AIF inverted
+        0x02, 0x00, // Set during calibration
+        0x03, 0x3F, // Set maximum size fo RX mode
+        0x04, 0x00, // Clear FPM and PSA to use FIFO simple mode
+        // 0x05, 0x00, // FIFO data, not needed for setup
+        // 0x06, 0x00, // ID Data, set later.
+        0x07, 0x00,
+        0x08, 0x00, // Wake on radio disabled
+        0x09, 0x00, // Wake on radio disabled
+        // 0x0A, 0b10100010, // Configure CKO pin to output Fsysck
+        0x0A, 0x00, // Configure CKO pin to off
+        0x0B, 0x19, // Configure GIO1 pin for 4-wire SPI mode
+        0x0C, 0x01, // Configure GIO2 pin to output WTR
+        0x0D, 0x05, // Configure for 16MHz crystal, 500Kpbs data rate
+        0x0E, 0x00, // Configure for 16MHz crystal, 500Kbps data rate
+        0x0F, 0x00, // TODO: pass channel into config?
+        0x10, 0x9e, //  Configure for 16MHz crystal, 500kbps data rate
+        0x11, 0x4B, //recommended
+        0x12, 0x00, // Configure for 16 MHz crystal, 500kbps data rate
+        0x13, 0x02, // Configure for 16 MHz crystal, 500kbps data rate 
+        0x14, 0x16, // Recommended, disable TXSM moving average, disable TX modulation, disable filter
+        0x15, 0x2b, // TODO
+        0x16, 0x12, // Recommended,
+        0x17, 0x4f, // Recommended, XTAL delay 600us, AGC delay 20us, RSSI delay 80us
+        0x18, 0x63, // TODO: BWS=1
+        0x19, 0x80, // Recommended, set pixer gain to 24dB, LNA gain to 24dB
+        0x1A, 0x80, // TODO: Why (copied from sample code)
+        0x1B, 0x00, // TODO: Why (copied from sample code)
+        0x1C, 0x0a, // Recommended
+        0x1D, 0x32, // TODO: Why (copied from sample code)
+        0x1E, 0xc3, // Recommended TODO: this enables RSSI, what is the effect?
+        0x1F, 0x1f, // Disable whitening, enable FEC, CRC, id=4 bytes, preamble=4 bytes TODO: what is MCS
+        0x20, 0x16, // PMD = 10 for 250/500 kbps signal rate
+        0x21, 0x00, // Data whitening disabled
+        0x22, 0x00, // Recommeded TODO: should MFB still be set?
+        // 0x23, 0x00, // Read only
+        0x24, 0x13, // Recommended
+        // 0x25, 0x00,
+        0x26, 0x23, // TODO: Why (copied from sample code)
+        0x27, 0x00,
+        0x28, 0x17, // TX output power: 0dBm TODO: verify me
+        0x29, 0x47, // Reserved, DCM=10 for 250/500 Kbps
+        0x2A, 0x80, // Recommended
+        0x2B, 0xD6, // Reserved, Recommended
+        0x2C, 0x01, // Reserved
+        0x2D, 0x51, // Reserved, TODO: PRS
+        0x2E, 0x18, // Reserved
+        0x2F, 0x00, // Recommended
+        0x30, 0x01, // Reserved
+        0x31, 0x0F, // Reserved
+        0x32, 0x00, // Reserved
+        0x32, 0x7F, // Max ramping
+
+#endif
 };
 
 volatile uint16_t radio_rx_count = 0;
@@ -450,24 +515,17 @@ volatile uint16_t radio_rx_error = 0;
 void radio_init(void)
 {
 	pin_ddr(RADIO_IO1, 0);
+	pin_ddr(RADIO_IO2, 0);
 	pin_ddr(RADIO_SDIO, 1);
 	pin_ddr(RADIO_SCK, 1);
 	pin_ddr(RADIO_SCS, 1);
 
 	pin_write(RADIO_SCS, 1);
 
-
+#if 0
 	// force a reset
 	radio_reg_write(0,0);
 	delay(200);
-
-	// try writing to the id
-	id[0] = 0x55;
-	id[1] = 0xaa;
-	id[2] = 0x01;
-	id[3] = 0x10;
-	radio_reg_write_buf(A7106_REG_ID, id, 4);
-	radio_reg_read_buf(A7106_REG_ID, id+4, 4);
 
 	// there is something weird in this value; not sure if docs are right
 	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
@@ -478,11 +536,13 @@ void radio_init(void)
 		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
 		| A7106_REG_CHARGE_PUMP_RGC0 // shall be set to 0, but is set?
 	);
+#endif
 
 	// send all of our initial register states
 	for(unsigned i = 0 ; i < sizeof(radio_init_cmd) ; i+=2)
 		radio_reg_write(radio_init_cmd[i+0], radio_init_cmd[i+1]);
 
+#if 0
 	// charge pump current register; normal value
 	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
 		| A7106_REG_CHARGE_PUMP_LVR // shall be set to 1
@@ -491,6 +551,7 @@ void radio_init(void)
 		| A7106_REG_CHARGE_PUMP_CELS // shall be set to 1
 		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
 	);
+#endif
 
 	if (!radio_calibrate()
 	&&  !radio_calibrate()
@@ -508,28 +569,38 @@ void radio_init(void)
 		return;
 
 	// radio is ready!
-	radio_status = 0;
+	//radio_status = 0;
 
-	// slow down the radio and leave it in easy fifo mode
-	radio_speed(RADIO_SPEED_2, 0, 1);
-	radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
+	// high speed, FEC + CRC
+	if (0)
+		radio_speed(RADIO_SPEED_500, 1, 1);
+	//radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
 
 	// 2404 = 2400 MHz + 8 * 500 KHz
 	// looks like maybe (G?)FSK at 2403.856 and 2404.219, ~360 Hz
-	radio_channel(0x08);
+	radio_channel(0x0F);
+
+	// try writing to the id
+	id[0] = 0x93;
+	id[1] = 0x0b;
+	id[2] = 0x51;
+	id[3] = 0xde;
+	radio_reg_write_buf(A7106_REG_ID, id, 4);
+	radio_reg_read_buf(A7106_REG_ID, id+4, 4);
 
 
-#if 0
+
+#if 1
 	// try doing some tx... build the preamble and destination id
-	id[0] = 0x55;
+	id[0] = 64;
 	id[1] = 0x55;
 	id[2] = 0x55;
 	id[3] = 0x55;
 
-	id[4] = 0x50;
-	id[5] = 0xFF;
-	id[6] = 0x00;
-	id[7] = 0xFF;
+//	id[4] = 0x50;
+//	id[5] = 0xFF;
+//	id[6] = 0x00;
+//	id[7] = 0xFF;
 
 	uint32_t counter =0;
 
@@ -542,11 +613,15 @@ void radio_init(void)
 			id[9] = (counter >> 16) & 0xFF;
 			id[10] = (counter >> 8) & 0xFF;
 			id[11] = (counter >> 0) & 0xFF;
-			if (radio_tx_buf(id, 60))
+			if (radio_tx_buf(id, 64))
 				radio_rx_error++;
+			else
+				radio_rx_count++;
+
+			delay(100);
 		}
 
-		delay(5000);
+		delay(1000);
 		//radio_strobe(RADIO_CMD_SLEEP);
 		//delay(100);
 		//radio_strobe(RADIO_CMD_STBY);
