@@ -1,5 +1,6 @@
 CC=msp430-gcc
 CFLAGS=\
+	-g \
 	-W \
 	-Wall \
 	-O3 \
