@@ -1,4 +1,7 @@
-CC=msp430-gcc
+CROSS=msp430-
+CC=$(CROSS)gcc
+SIZE=$(CROSS)size
+
 CFLAGS=\
 	-g \
 	-W \
@@ -13,6 +16,7 @@ all: epd
 
 epd: main.o epd.o font.o radio.o flash.o
 	$(CC) $(CFLAGS) -o $@ $^
+	$(SIZE) $@
 
 -include .*.d
 
