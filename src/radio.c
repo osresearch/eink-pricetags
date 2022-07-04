@@ -119,6 +119,12 @@
 #define A7106_REG_CHARGE_PUMP_ROSCS BIT(7)
 
 volatile uint8_t radio_status;
+struct {
+	volatile uint16_t rx_count;
+	volatile uint16_t rx_error;
+	volatile uint16_t tx_count;
+	volatile uint16_t tx_error;
+} radio_stats;
 
 /*
  * busy loop delay, with their constant.
@@ -216,9 +222,17 @@ void radio_wakeup(void)
 	delay(100);
 }
 
-void radio_set_id(const uint8_t * id)
+void radio_set_id(uint32_t id)
 {
-	radio_reg_write_buf(A7106_REG_ID, id, 4);
+	uint8_t id_buf[] = {
+		(id >> 24) & 0xFF,
+		(id >> 16) & 0xFF,
+		(id >>  8) & 0xFF,
+		(id >>  0) & 0xFF,
+	};
+
+	radio_reg_write_buf(A7106_REG_ID, id_buf, sizeof(id_buf));
+
 	// todo: check that it worked?
 }
 
@@ -324,8 +338,6 @@ static int radio_osc_setup(void)
 }
 
 
-uint8_t id[64];
-
 static void radio_channel(const uint8_t value)
 {
 	radio_reg_write(A7106_REG_PLL1, value);
@@ -400,20 +412,19 @@ static int8_t radio_tx_buf(const uint8_t *buf, const unsigned len)
 
 	//delay(500);
 	radio_strobe(RADIO_CMD_TX);
+	radio_stats.tx_count++;
 
 	//delay(1000);
 
-	delay(1);
+	delay(10);
 
-	//for(unsigned i = 0 ; i < 64 ; i++)
-	while(1)
+	for(unsigned i = 0 ; i < 64 ; i++)
 	{
 		if (!radio_busy())
 			return 0;
-		delay(0x10);
 	}
 
-	radio_status = 0x99;
+	radio_stats.tx_error++;
 	return -1;
 }
 
@@ -474,9 +485,6 @@ static const uint8_t radio_init_cmd[] = {
         0x32, 0x7F, // Max ramping
 };
 
-volatile uint16_t radio_rx_count = 0;
-volatile uint16_t radio_rx_spin = 0;
-volatile uint16_t radio_rx_error = 0;
 
 void radio_init(uint8_t channel)
 {
@@ -520,35 +528,43 @@ void radio_init(uint8_t channel)
 	return;
 }
 
-int8_t radio_tx(const uint8_t * id, const uint8_t * buf, uint8_t len)
+int8_t radio_tx(uint32_t id, const uint8_t * buf, uint8_t len)
 {
 	radio_wakeup();
 	radio_set_id(id);
 	return radio_tx_buf(buf, len);
 }
 
-int8_t radio_rx(const uint8_t * id, uint8_t * buf, uint8_t max_len, uint8_t timeout)
+int8_t radio_rx(uint32_t id, uint8_t * buf, uint8_t max_len, uint16_t timeout)
 {
 	radio_wakeup();
 	radio_set_id(id);
 
-	radio_fifo_reset(max_len);
 	radio_strobe(RADIO_CMD_RX);
 	delay(10);
 
 	// wait for WTR to go low, indicating rx complete
-	for(uint8_t spin = 0 ; radio_busy() ; spin++)
+	for(uint16_t spin = 0 ; radio_busy() ; spin++)
 	{
-		if (spin > timeout)
-			return 0;
+		if (spin < timeout)
+			continue;
+
+		// cancel the RX
+		radio_strobe(RADIO_CMD_STBY);
+		return 0;
 	}
 
 	// check the CRC and FEC registers
 	const uint8_t status = radio_reg_read(A7106_REG_MODE);
 	if (status & (A7106_REG_MODE_CRCF | A7106_REG_MODE_FECF))
+	{
+		radio_stats.rx_error++;
 		return -1;
+	}
 
 	// read in the message to our buffer
+	radio_fifo_reset(max_len);
 	radio_reg_read_buf(A7106_REG_FIFO_DATA, buf, max_len);
+	radio_stats.rx_count++;
 	return 1;
 }
