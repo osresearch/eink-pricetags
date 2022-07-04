@@ -49,3 +49,59 @@ void flash_read(uint32_t addr, uint8_t * buf, uint8_t len)
 	pin_write(SPI_FLASH_CS, 1);
 }
 
+uint8_t flash_status(void)
+{
+	pin_write(SPI_FLASH_CS, 0);
+	flash_write_byte(0x05);
+	uint8_t sr = flash_read_byte();
+	pin_write(SPI_FLASH_CS, 1);
+
+	return sr;
+}
+
+
+void flash_wren()
+{
+	(void) flash_status();
+	pin_write(SPI_FLASH_CS, 0);
+	flash_write_byte(0x06);
+	pin_write(SPI_FLASH_CS, 1);
+}
+
+void flash_erase(uint32_t addr)
+{
+	flash_wren();
+
+	pin_write(SPI_FLASH_CS, 0);
+	flash_write_byte(0x20);
+	flash_write_byte((addr >> 16) & 0xFF);
+	flash_write_byte((addr >>  8) & 0xFF);
+	flash_write_byte((addr >>  0) & 0xFF);
+	pin_write(SPI_FLASH_CS, 1);
+
+#define SPI_WIP 0x01
+#define SPI_WEL 0x02
+
+	while (flash_status() & SPI_WIP)
+		;
+}
+
+void flash_write(uint32_t addr, const uint8_t * buf, uint8_t len)
+{
+	flash_wren();
+
+	pin_write(SPI_FLASH_CS, 0);
+	flash_write_byte(0x02);
+	flash_write_byte((addr >> 16) & 0xFF);
+	flash_write_byte((addr >>  8) & 0xFF);
+	flash_write_byte((addr >>  0) & 0xFF);
+
+	for(uint8_t i = 0 ; i < len ; i++)
+		flash_write_byte(buf[i]);
+
+	pin_write(SPI_FLASH_CS, 1);
+
+	while (flash_status() & SPI_WIP)
+		;
+}
+
