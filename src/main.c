@@ -162,7 +162,7 @@ int check_for_updates(uint32_t flash_addr)
 	flash_write(flash_addr + img_offset, reply->data, sizeof(reply->data));
 	img_offset += sizeof(reply->data);
 
-#define IMG_SIZE 4096
+#define IMG_SIZE 4000
 
 	if (img_offset >= IMG_SIZE)
 		return 1;
