@@ -11,7 +11,7 @@ CFLAGS=\
 
 all: epd
 
-epd: main.o epd.o font.o radio.o
+epd: main.o epd.o font.o radio.o flash.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 -include .*.d

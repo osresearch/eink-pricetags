@@ -1,6 +1,8 @@
 #include <msp430.h>
 #include <stdint.h>
 #include "epd.h"
+#include "flash.h"
+#include "radio.h"
 
 
 // incremented once per second
@@ -87,6 +89,29 @@ void draw_msg(void)
 	epd_shutdown();
 }
 
+
+void draw_flash(uint16_t addr)
+{
+	epd_setup();
+	epd_reset();
+	epd_init();
+
+	epd_draw_start();
+	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
+	{
+		// 128 bits of data
+		uint8_t data[(EPD_WIDTH + 7)/8];
+
+		flash_read(addr, data, sizeof(data));
+		addr += sizeof(data);
+
+		for(unsigned x = 0 ; x < (EPD_WIDTH+7)/8 ; x++)
+			epd_data(data[x]);
+	}
+	epd_display();
+	epd_shutdown();
+}
+
 static char hexdigit(unsigned x)
 {
 	x &= 0xF;
@@ -101,8 +126,15 @@ int main(void)
 {
 	WDTCTL = WDTPW + WDTHOLD; // Stop WDT
 
-	// turn off the radio
+	// read the image from flash
+	flash_init();
+
+	draw_flash(0);
+
+	// turn on the radio, then let it turn off again
 	radio_init();
+
+	
 
 	BCSCTL3 = LFXT1S_2; // select VLO as the ACLK (used by the WDT)
 	WDTCTL = WDT_ADLY_1000;
