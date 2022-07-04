@@ -198,7 +198,29 @@ static uint8_t radio_reg_read(const uint8_t cmd)
 	return data;
 }
 
+static uint8_t radio_sleeping;
 
+void radio_sleep(void)
+{
+	radio_strobe(RADIO_CMD_SLEEP);
+	radio_sleeping = 1;
+}
+
+void radio_wakeup(void)
+{
+	if (!radio_sleeping)
+		return;
+
+	radio_sleeping = 0;
+	radio_strobe(RADIO_CMD_STBY);
+	delay(100);
+}
+
+void radio_set_id(const uint8_t * id)
+{
+	radio_reg_write_buf(A7106_REG_ID, id, 4);
+	// todo: check that it worked?
+}
 
 
 /*
@@ -371,12 +393,8 @@ static uint8_t radio_busy(void)
  * 6. Send TX Strobe Command.
  * 7. Done
  */
-int radio_tx_buf(const uint8_t *buf, const unsigned len)
+static int8_t radio_tx_buf(const uint8_t *buf, const unsigned len)
 {
-/*
-	radio_channel(channel); // 2405.001?
-	channel = (channel + 1) & 0xF;
-*/
 	radio_fifo_reset(len);
 	radio_reg_write_buf(A7106_REG_FIFO_DATA, buf, len);
 
@@ -401,56 +419,6 @@ int radio_tx_buf(const uint8_t *buf, const unsigned len)
 
 // todo: document these registers and their bits
 static const uint8_t radio_init_cmd[] = {
-#if 0
-	0x01, 0x62, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=1 ARSSI=1 DDPC=0
-	//0x01, 0x42, // mode control: ADCM=0 FMS=1 FMT=0 WORE=0 DFCD=0 AIF=0 ARSSI=1 DDPC=0
-	0x03, 0x3f,
-	0x04, 0x40, // FIFO2: FPM=01 PSA=000000
-	0x07, 0xff,
-	0x08, 0xcb,
-	0x09, 0x00,
-	0x0a, 0x00,
-	0x0b, 0x01, // GIO1 pin control: WTR, non-inverted output enabled
-	0x0c, 0x13, // GIO2 pin control: WAK, inverted output enabled
-	//0x0c, 0x09, // GIO2 pin control: CD, inverted output enabled
-	0x0d, 0x05, // Clock: GRC=0000 CSC=01 GCS=0 XS=1
-	0x0e, 0x00, // Data rate: no divisor
-	0x0f, 0x64,
-	0x10, 0x9e, // PLL2: DBL=1, RRC=00, CHR=1111
-	0x11, 0x4b, // PLL3: BIP = 0x4b => F_lobase == 2400 MHz
-	0x12, 0x00, // PLL4/5: BFP = 0x0002 => F_lobase == 2400.001 MHz
-	0x13, 0x02,
-	0x14, 0x16,
-	0x15, 0x2b,
-	0x16, 0x12,
-	0x17, 0x40,
-	0x18, 0x62, // rx: QDLS=0 RXSM=11 FC=0 RXDI=0 DMG=0 BWS=1 ULS=0
-	0x19, 0x80,
-	0x1a, 0x80,
-	0x1b, 0x00,
-	0x1c, 0x0a,
-	0x1d, 0x32,
-	0x1e, 0xc3, // ADC: defaults
-	0x1f, 0x0f, // CODE1: FECS=0 CRCS=1 IDL=1 PML=11
-	0x20, 0x12, // CODE2: DCL=001 ETH=00 PMD=10
-	0x21, 0x00,
-	0x22, 0x00,
-	0x24, 0x0f,
-	0x25, 0x00,
-	0x26, 0x23,
-	0x27, 0x70,
-	0x28, 0x1f,
-	0x29, 0x47, // RX DEM: DMT=0 DCM=10 MLP=00 SLF=111
-	0x2a, 0x80,
-	0x2b, 0x77,
-	0x2c, 0x01,
-	0x2d, 0x45,
-	0x2e, 0x19,
-	0x2f, 0x00,
-	0x30, 0x01,
-	0x31, 0x0f,
-	0x33, 0x7f,
-#else
         0x00, 0x00, // Software reset
         0x01, 0x62, // 0b01100010, // Enable auto RSSI measurement, disable RF IF shift, NOTE: AIF inverted
         0x02, 0x00, // Set during calibration
@@ -504,15 +472,13 @@ static const uint8_t radio_init_cmd[] = {
         0x31, 0x0F, // Reserved
         0x32, 0x00, // Reserved
         0x32, 0x7F, // Max ramping
-
-#endif
 };
 
 volatile uint16_t radio_rx_count = 0;
 volatile uint16_t radio_rx_spin = 0;
 volatile uint16_t radio_rx_error = 0;
 
-void radio_init(void)
+void radio_init(uint8_t channel)
 {
 	pin_ddr(RADIO_IO1, 0);
 	pin_ddr(RADIO_IO2, 0);
@@ -522,36 +488,10 @@ void radio_init(void)
 
 	pin_write(RADIO_SCS, 1);
 
-#if 0
-	// force a reset
-	radio_reg_write(0,0);
-	delay(200);
-
-	// there is something weird in this value; not sure if docs are right
-	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
-		| A7106_REG_CHARGE_PUMP_LVR // shall be set to 1
-		| A7106_REG_CHARGE_PUMP_CPC1 // 11 == 2.0mA
-		| A7106_REG_CHARGE_PUMP_CPC0
-		| A7106_REG_CHARGE_PUMP_CELS // shall be set to 1
-		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
-		| A7106_REG_CHARGE_PUMP_RGC0 // shall be set to 0, but is set?
-	);
-#endif
-
 	// send all of our initial register states
+	// first is a reset
 	for(unsigned i = 0 ; i < sizeof(radio_init_cmd) ; i+=2)
 		radio_reg_write(radio_init_cmd[i+0], radio_init_cmd[i+1]);
-
-#if 0
-	// charge pump current register; normal value
-	radio_reg_write(A7106_REG_CHARGE_PUMP, 0
-		| A7106_REG_CHARGE_PUMP_LVR // shall be set to 1
-		| A7106_REG_CHARGE_PUMP_CPC1 // 11 == 2.0mA
-		| A7106_REG_CHARGE_PUMP_CPC0
-		| A7106_REG_CHARGE_PUMP_CELS // shall be set to 1
-		| A7106_REG_CHARGE_PUMP_RGC1 // shall be set to 1
-	);
-#endif
 
 	if (!radio_calibrate()
 	&&  !radio_calibrate()
@@ -568,110 +508,47 @@ void radio_init(void)
 	if (!radio_osc_setup())
 		return;
 
-	// radio is ready!
-	//radio_status = 0;
-
 	// high speed, FEC + CRC
 	if (0)
 		radio_speed(RADIO_SPEED_500, 1, 1);
 	//radio_reg_write(A7106_REG_FIFO2, 0x00); // FPM=0, PSA=0
 
-	// 2404 = 2400 MHz + 8 * 500 KHz
-	// looks like maybe (G?)FSK at 2403.856 and 2404.219, ~360 Hz
-	radio_channel(0x0F);
+	// frequency = 2400 MHz + channel * 500 KHz
+	// looks like maybe (G?)FSK at ~350 KHz separation
+	radio_channel(channel);
 
-	// try writing to the id
-	id[0] = 0x93;
-	id[1] = 0x0b;
-	id[2] = 0x51;
-	id[3] = 0xde;
-	radio_reg_write_buf(A7106_REG_ID, id, 4);
-	radio_reg_read_buf(A7106_REG_ID, id+4, 4);
-
-
-	// and put the radio to sleep
-	radio_strobe(RADIO_CMD_SLEEP);
 	return;
+}
 
-#if 1
-	// try doing some tx... build the preamble and destination id
-	id[0] = 64;
-	id[1] = 0x55;
-	id[2] = 0x55;
-	id[3] = 0x55;
+int8_t radio_tx(const uint8_t * id, const uint8_t * buf, uint8_t len)
+{
+	radio_wakeup();
+	radio_set_id(id);
+	return radio_tx_buf(buf, len);
+}
 
-//	id[4] = 0x50;
-//	id[5] = 0xFF;
-//	id[6] = 0x00;
-//	id[7] = 0xFF;
+int8_t radio_rx(const uint8_t * id, uint8_t * buf, uint8_t max_len, uint8_t timeout)
+{
+	radio_wakeup();
+	radio_set_id(id);
 
-	uint32_t counter =0;
+	radio_fifo_reset(max_len);
+	radio_strobe(RADIO_CMD_RX);
+	delay(10);
 
-	while(1)
+	// wait for WTR to go low, indicating rx complete
+	for(uint8_t spin = 0 ; radio_busy() ; spin++)
 	{
-		for(unsigned i = 0 ; i < 32 ; i++)
-		{
-			counter++;
-			id[8] = (counter >> 24) & 0xFF;
-			id[9] = (counter >> 16) & 0xFF;
-			id[10] = (counter >> 8) & 0xFF;
-			id[11] = (counter >> 0) & 0xFF;
-			if (radio_tx_buf(id, 64))
-				radio_rx_error++;
-			else
-				radio_rx_count++;
-
-			delay(100);
-		}
-
-		delay(1000);
-		//radio_strobe(RADIO_CMD_SLEEP);
-		//delay(100);
-		//radio_strobe(RADIO_CMD_STBY);
+		if (spin > timeout)
+			return 0;
 	}
-#else
-	// try doing some rx
-	while(1)
-	{
-		radio_fifo_reset(60);
-		radio_strobe(RADIO_CMD_RX);
-		delay(100);
 
-		// wait for WTR to go low, indicating rx complete
-		while(radio_busy())
-		{
-			radio_rx_spin++;
-			if (radio_reg_read(A7106_REG_MODE_CONTROL) & A7106_REG_MODE_CONTROL_CD)
-				
-				radio_rx_count++;
-		}
+	// check the CRC and FEC registers
+	const uint8_t status = radio_reg_read(A7106_REG_MODE);
+	if (status & (A7106_REG_MODE_CRCF | A7106_REG_MODE_FECF))
+		return -1;
 
-/*
-		while(1)
-		{
-			uint8_t a = radio_busy();
-			delay(10);
-			uint8_t b = radio_busy();
-			if (a == 0 || b == 0)
-				break;
-			delay(10);
-		}
-*/
-		//radio_rx_count++;
-
-		// check the CRC and FEC registers
-		const uint8_t status = radio_reg_read(A7106_REG_MODE);
-		if (status & (A7106_REG_MODE_CRCF | A7106_REG_MODE_FECF))
-		{
-			// rx error!
-			radio_rx_error++;
-			continue;
-		}
-
-		// read in the message to our buffer
-		radio_reg_read_buf(A7106_REG_FIFO_DATA, id, 60);
-
-		radio_rx_count++;
-	}
-#endif
+	// read in the message to our buffer
+	radio_reg_read_buf(A7106_REG_FIFO_DATA, buf, max_len);
+	return 1;
 }

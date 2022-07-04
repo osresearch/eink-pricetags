@@ -121,6 +121,18 @@ static char hexdigit(unsigned x)
 		return 'A' + x - 0xa;
 }
 
+typedef struct {
+	uint8_t controller[4];
+	uint8_t id[4];
+	uint8_t channel;
+} radio_config_t;
+
+static const radio_config_t config = {
+	.controller = { 0x55, 0xab, 0xcd, 0xef },
+	.id = { 0x50, 0x12, 0x34, 0x56 },
+	.channel = 4,
+};
+
 
 int main(void)
 {
@@ -131,13 +143,24 @@ int main(void)
 
 	draw_flash(0);
 
-	// turn on the radio, then let it turn off again
-	radio_init();
+	// configure the radio, then let it turn off again
+	radio_init(config.channel);
+	radio_sleep();
 
-	
+	static const uint8_t tx_msg[] = "\x40This is a test message";
+
+	while(1)
+	{
+		radio_tx(config.controller, tx_msg, 64);
+		radio_sleep();
+		for(volatile int i = 0 ; i < 1000 ; i++)
+			for(volatile int j = 0 ; j < 1000 ; j++)
+				;
+	}
+
 
 	BCSCTL3 = LFXT1S_2; // select VLO as the ACLK (used by the WDT)
-	WDTCTL = WDT_ADLY_1000;
+	WDTCTL = WDT_ADLY_1000; // sleep for one second
 	IE1 |= WDTIE;
 	__enable_interrupt(); // GIE not set in LPM3 bits?
 
@@ -145,10 +168,11 @@ int main(void)
 	{
 		LPM3;
 
-/*
-		if ((timer & 0x7) != 0)
+		// every so often, check in with the head node
+		if ((timer & 0x3) != 0)
 			continue;
-*/
+
+		radio_tx(config.controller, tx_msg, 64);
 
 		short i = 0;
 		msg[i++] = '=';
