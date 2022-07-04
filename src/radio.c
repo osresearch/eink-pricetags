@@ -589,6 +589,9 @@ void radio_init(void)
 	radio_reg_read_buf(A7106_REG_ID, id+4, 4);
 
 
+	// and put the radio to sleep
+	radio_strobe(RADIO_CMD_SLEEP);
+	return;
 
 #if 1
 	// try doing some tx... build the preamble and destination id
