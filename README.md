@@ -68,8 +68,8 @@ plotting it with a 128-bit stride reveals the image.
 SPI flash pins:
 
 * `CE` - P3.0 (also pulled high)
-* `DO` - P1.6
-* `DI` - P1.7
+* `DO` - P1.6 (output from flash chip to msp430)
+* `DI` - P1.7 (input to flash chip from msp430)
 * `CLK` - P1.5
 * `!RST` - pulled high
 * `!WP` - pulled high
@@ -77,12 +77,16 @@ SPI flash pins:
 ## radio
 ![A7106 radio through the microscope](images/pcb-radio.jpg)
 
-* `GIO1` - P1.1 (RX data from radio? can be set in mode 0b1000 for direct output)
-* `GIO2` - P1.0 (wakeup? ready? can be set to different modes)
-* `SDIO` - P1.2 (TX data to radio)
+* `GIO1` - P1.1 (RX data from radio in 4-pin mode)
+* `GIO2` - P1.0 (`WTR`, goes high when TX or RX are busy)
+* `SDIO` - P1.2 (TX data to radio, RX in 3-pin mode)
 * `SCK` - P1.4 (clock)
 * `SCS` - P1.3 (radio chip select)
 
+## uart
+
+There are four extra pins on the bottom of the board for talking to the MCU.
+Need to update the diagram with their pin mappings.
 
 ## e-ink
 
