@@ -219,7 +219,7 @@ void radio_wakeup(void)
 
 	radio_sleeping = 0;
 	radio_strobe(RADIO_CMD_STBY);
-	delay(100);
+	delay(1);
 }
 
 void radio_set_id(uint32_t id)
@@ -416,7 +416,7 @@ static int8_t radio_tx_buf(const uint8_t *buf, const unsigned len)
 
 	//delay(1000);
 
-	delay(10);
+	delay(1);
 
 	for(unsigned i = 0 ; i < 64 ; i++)
 	{
@@ -509,7 +509,7 @@ void radio_init(uint8_t channel)
 		return;
 	}
 
-	delay(1000);
+	delay(100);
 
 	// wake on radio is not yet configured, so it is not calibrated
 	if (0)
@@ -541,7 +541,7 @@ int8_t radio_rx(uint32_t id, uint8_t * buf, uint8_t max_len, uint16_t timeout)
 	radio_set_id(id);
 
 	radio_strobe(RADIO_CMD_RX);
-	delay(10);
+	//delay(1);
 
 	// wait for WTR to go low, indicating rx complete
 	for(uint16_t spin = 0 ; radio_busy() ; spin++)
