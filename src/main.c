@@ -119,7 +119,7 @@ msg_hello_t;
 typedef struct {
 	uint32_t img_id;
 	uint16_t offset;
-	uint8_t data[58];
+	uint8_t data[32];
 }
 __attribute__((__packed__))
 msg_data_t;
@@ -139,11 +139,11 @@ int check_for_updates(uint32_t flash_addr)
 	hello->offset = img_offset;
 
 	// send a ping?
-	radio_tx(config.gw_id, (const void*) hello, 64); // sizeof(msg));
+	radio_tx(config.gw_id, (const void*) hello, 40); // sizeof(msg));
 
 	// wait for a reply
 	msg_data_t * const reply = (void *) msg_buf;
-	if (radio_rx(config.tag_id, (void*) reply, 64 /*sizeof(reply)*/, 10000) != 1)
+	if (radio_rx(config.tag_id, (void*) reply, 40 /*sizeof(reply)*/, 10000) != 1)
 		return -1;
 
 	// we have data!
