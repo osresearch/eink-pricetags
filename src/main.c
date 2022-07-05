@@ -9,77 +9,12 @@
 // incremented once per second
 static volatile uint32_t timer;
 
-extern const uint8_t boot_screen[];
-static const
+// re-generated during the build process
 #include "provision.h"
 
-#if 0
 
-static char msg[16];
-static unsigned msg_i = 0;
-static uint8_t glyph_x = 0;
-static uint8_t msg_x = 0;
-extern const uint8_t font[][6];
-
-static uint8_t bitmap(unsigned y, unsigned x)
-{
-	const char c = msg[msg_i];
-	if (c == '\0')
-	{
-		msg_i = 0;
-		return 0xFF;
-	}
-
-	if (msg_x != x)
-	{
-		msg_x = x;
-		glyph_x++;
-	}
-
-	if (glyph_x == (6 << 2))
-	{
-		glyph_x = 0;
-		msg_i++;
-		return 0xFF;
-	}
-
-	const uint8_t * const glyph = font[c - 0x20];
-	const uint8_t bitmap = glyph[glyph_x >> 2];
-
-	const uint8_t bit = (bitmap >> ((y >> 4) & 7)) & 0x01;
-
-	return bit ? 0x00 : 0xFF;
-}
-
-void draw_msg(void)
-{
-	epd_setup();
-	epd_reset();
-	epd_init();
-
-	// try to draw some text...
-	epd_draw_start();
-	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
-		for(unsigned x = 0 ; x < EPD_WIDTH ; x += 8)
-		{
-			epd_data(bitmap(x,y));
-		}
-	epd_display();
-	epd_shutdown();
-}
-
-static char hexdigit(unsigned x)
-{
-	x &= 0xF;
-	if (x <= 9)
-		return '0' + x;
-	else
-		return 'A' + x - 0xa;
-}
-
-#endif
-
-void draw_image(const uint8_t * image, uint16_t len)
+// draws an RLE compressed image
+void draw_image(const uint8_t * image, uint16_t len, uint8_t invert)
 {
 	epd_setup();
 	epd_reset();
@@ -100,8 +35,14 @@ void draw_image(const uint8_t * image, uint16_t len)
 		{
 			byte = (byte << 1) | val;
 			bits = (bits + 1) & 7;
-			if (bits == 0)
-				epd_data(byte);
+
+			if (bits != 0)
+				continue;
+
+			if (invert)
+				byte ^= 0xFF;
+
+			epd_data(byte);
 		}
 	}
 
@@ -113,15 +54,62 @@ void draw_image(const uint8_t * image, uint16_t len)
 	epd_shutdown();
 }
 
-static uint32_t img_id = 0;
-static uint8_t img_map[16];
+typedef struct {
+	uint32_t id;
+	uint8_t not_ready;
+	uint8_t need_draw;
+	uint8_t resv1;
+	uint8_t resv2;
+	uint32_t resv3;
+	uint32_t resv4;
+	uint8_t map[16]; // offset 16
+	uint8_t data[]; // offset 32
+} flash_img_t;
+
+static flash_img_t img;
+#define img_addr 0x0
+#define img_map_offset 16
+#define img_data_offset 32
+
+// check to see if we have all the parts
+// note that a 1 means we have not yet received it, due flash polarity
+// todo: don't hardcode the number of parts
+static int img_check_complete(void)
+{
+	for(unsigned i = 0 ; i < 126 ; i++)
+	{
+		const uint8_t b = img.map[i >> 3];
+		const uint8_t bit = 1 << (i & 7);
+
+		if ((b & bit) == 1)
+		{
+			img.not_ready = 1;
+			return 0;
+		}
+	}
+
+	img.not_ready = 0;
+	return 1;
+}
 
 
-void draw_flash(uint16_t addr)
+void img_init(const uint16_t flash_addr)
+{
+	// the image is stored on a full flash page,
+	// along with some meta data that is fetched during the boot
+	flash_read(flash_addr, &img, sizeof(img));
+
+	img_check_complete();
+}
+
+
+void img_draw(const uint16_t flash_addr)
 {
 	epd_setup();
 	epd_reset();
 	epd_init();
+
+	uint16_t addr = flash_addr + img_data_offset;
 
 	epd_draw_start();
 	for(unsigned y = 0 ; y < EPD_HEIGHT ; y++)
@@ -137,6 +125,8 @@ void draw_flash(uint16_t addr)
 	}
 	epd_display();
 	epd_shutdown();
+
+	img.need_draw = 0;
 }
 
 typedef struct {
@@ -169,9 +159,9 @@ int check_for_updates(uint32_t flash_addr)
 	hello->tag_id = macaddr;
 	hello->githash = githash;
 	hello->install_date = install_date;
-	hello->img_id = img_id;
+	hello->img_id = img.id;
 
-	memcpy(hello->img_map, img_map, sizeof(hello->img_map));
+	memcpy(hello->img_map, img.map, sizeof(hello->img_map));
 
 	// send a ping?
 	radio_tx(gateway, (const void*) hello, 40); // sizeof(msg));
@@ -179,15 +169,18 @@ int check_for_updates(uint32_t flash_addr)
 	// todo: wait for some number of reply
 	msg_data_t * const reply = (void *) msg_buf;
 	if (radio_rx(macaddr, (void*) reply, 40 /*sizeof(reply)*/, 10000) != 1)
-		return -1;
+		return 0;
 
 	// we have data!
-	if (reply->img_id != img_id)
+	if (reply->img_id != img.id)
 	{
 		// starting a new image
-		img_id = reply->img_id;
-		memset(img_map, 0, sizeof(img_map));
+		memset(&img, 0xFF, sizeof(img));
+		img.id = reply->img_id;
+
+		// erase the old one, write in the new metadata
 		flash_erase(flash_addr);
+		flash_write(flash_addr, &img, sizeof(img));
 	}
 
 	// the img_map stores based on 32-byte packets,
@@ -197,34 +190,28 @@ int check_for_updates(uint32_t flash_addr)
 	const uint8_t bit_num = 1 << ((img_offset >> 5) & 7);
 
 	// todo: validate byte_num, img_offset, etc
-	// todo: write image map into flash
-	img_map[byte_num] |= bit_num;
+	// note that this is negative logic, since 
+	img.map[byte_num] &= ~bit_num;
 
-	flash_write(flash_addr + img_offset, reply->data, sizeof(reply->data));
+	flash_write(flash_addr + img_data_offset + img_offset, reply->data, sizeof(reply->data));
 
-	// check to see if we have all the parts
-	for(unsigned i = 0 ; i < 125 ; i++)
-	{
-		const uint8_t b = img_map[i >> 3];
-		const uint8_t bit = 1 << (i & 7);
-		if ((b & bit) == 0)
-			return 0;
-	}
+	img_check_complete();
+	flash_write(flash_addr + img_map_offset + byte_num, &img.map[byte_num], 1);
 
-	// all the fields are filled in!
 	return 1;
 }
 
 int main(void)
 {
-	const uint32_t flash_addr = 0;
-
 	WDTCTL = WDTPW + WDTHOLD; // Stop WDT
 
-	// draw the boot screen, not the flash image for the first second
-	draw_image(bootscreen, bootscreen_len);
-
+	// init the flash and then load the image meta data
 	flash_init();
+	img_init(img_addr);
+
+	// draw the boot screen, not the flash image for the first second
+	draw_image(bootscreen, bootscreen_len, !img.not_ready);
+
 
 	// configure the radio, then let it turn off again
 	radio_init(channel);
@@ -236,28 +223,34 @@ int main(void)
 	IE1 |= WDTIE;
 	__enable_interrupt(); // GIE not set in LPM3 bits?
 
+	// let's do one check in before we sleep
+	while(check_for_updates(img_addr))
+		;
+
 	while(1)
 	{
 		LPM3;
 
-/*
-		// every so often, check in with the head node
-		if ((timer & 0x3) != 0)
-			continue;
-*/
-
-		while(1)
+		// if the image is ready, then draw it and go back to sleep
+		if (!img.not_ready)
 		{
-			int status = check_for_updates(flash_addr);
+			if (img.need_draw)
+				img_draw(img_addr);
 
-			if (status == -1)
-				break;
-
-			if (status == 1)
-				draw_flash(flash_addr);
+			// every so often, check in with the head node
+			// do so more often if we do not have a complete image
+			// watchdog triggers every second, so this is about
+			// once per minute
+			if ((timer & 0x3F) != 0)
+				continue;
 		}
 
+		// the image is not ready or we need to do a period check in
+		while(check_for_updates(img_addr))
+			;
+
 		radio_sleep();
+
 /*
 
 		short i = 0;
