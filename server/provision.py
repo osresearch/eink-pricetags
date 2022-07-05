@@ -12,7 +12,7 @@ width = 128  # actual 122, but padded
 # 1 bit per pixel for the output
 img = Image.new("1", (width,height))
 #font_big = ImageFont.truetype("fonts/IBMPlexMono-Bold.ttf", 40)
-font_big = ImageFont.truetype("fonts/Anonymous Pro B.ttf", 38)
+font_big = ImageFont.truetype("fonts/Anonymous Pro B.ttf", 40)
 font_small = ImageFont.truetype("fonts/Anonymous Pro.ttf", 14)
 
 def draw_text(img,x,y,msg,font):
@@ -34,9 +34,9 @@ mac = "%08x" % (autocor.mac(threshold=18))
 extra = subprocess.run(["git","rev-parse","--short","HEAD"], capture_output=True).stdout.decode('utf-8').rstrip()
 
 draw_text(img, 0, 0, now_str + " #" + extra + " %dx%d" % (height,width), font=font_small)
-draw_text(img, 17, 30, gw, font=font_big)
-draw_text(img, 52, 0, " gateway chan %d" % (channel), font=font_small)
-draw_text(img, 72, 30, mac, font=font_big)
+draw_text(img, 25, 40, gw, font=font_big)
+draw_text(img, 55, 0, " gateway chan %d" % (channel), font=font_small)
+draw_text(img, 80, 40, mac, font=font_big)
 draw_text(img, 110, 0, " address", font=font_small)
 
 def rle(b):
