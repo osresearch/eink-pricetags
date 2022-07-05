@@ -4,3 +4,5 @@
 a.out
 epd
 src/provision.h
+__pycache__
+tags
