@@ -37,6 +37,7 @@ class eink_server:
                 clients[client_id]['rx_count'] += 1
 
                 offset = None
+                flags = 0
                 if img_id != self.img_id:
                     # they have a different image
                     print(now(), '%08x: old image!' % (client_id))
@@ -52,16 +53,20 @@ class eink_server:
                           break
 
                 if offset is None:
-                    print(now(), '%08x: image %08x complete' % (client_id, img_id))
-                    continue
+                    #print(now(), '%08x: image %08x complete' % (client_id, img_id))
+                    offset = 0
+                    flags = 1 # go back to sleep
 
                 #print('%08x: sending %d' % (client_id, offset))
 
                 self.radio.set_id(client_id)
                 self.radio.transmit(
-                  struct.pack("<IHH", self.img_id, offset, 0) + self.image[offset:offset+32])
+                  struct.pack("<IHH", self.img_id, offset, flags) + self.image[offset:offset+32])
 
-                print(now(), '%08x: image %08x offset %d' % (client_id, img_id, offset))
+                if (flags & 1) == 0:
+                    print(now(), '%08x: %08x offset %d' % (client_id, img_id, offset))
+                else:
+                    print(now(), '%08x: %08x complete' % (client_id, img_id))
 
             #except a7106.RxError as e:
             except Exception as e:

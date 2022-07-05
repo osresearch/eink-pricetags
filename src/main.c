@@ -7,7 +7,7 @@
 
 
 // incremented once per second
-static volatile uint32_t timer;
+static volatile uint16_t timer;
 
 // re-generated during the build process
 #include "provision.h"
@@ -144,11 +144,13 @@ msg_hello_t;
 typedef struct {
 	uint32_t img_id;
 	uint16_t offset;
-	uint16_t reserved;
+	uint16_t flags;
 	uint8_t data[32];
 }
 __attribute__((__packed__))
 msg_data_t;
+
+#define REPLY_FLAG_OK 1
 
 static uint8_t msg_buf[40];
 
@@ -168,7 +170,11 @@ int check_for_updates(uint32_t flash_addr)
 
 	// todo: wait for some number of reply
 	msg_data_t * const reply = (void *) msg_buf;
-	if (radio_rx(macaddr, (void*) reply, 40 /*sizeof(reply)*/, 10000) != 1)
+	if (radio_rx(macaddr, (void*) reply, 40 /*sizeof(reply)*/, 7500) != 1)
+		return 0;
+
+	// if they say everything is ok, then we go back to deep sleep
+	if (reply->flags & REPLY_FLAG_OK)
 		return 0;
 
 	// we have data!
@@ -212,14 +218,14 @@ int main(void)
 	// draw the boot screen, not the flash image for the first second
 	draw_image(bootscreen, bootscreen_len, !img.not_ready);
 
-
 	// configure the radio, then let it turn off again
 	radio_init(channel);
 	radio_sleep();
 
-	// setup the watchdog to trigger every second
+	// setup the watchdog to trigger every three seconds or so
+	// not sure why this isn't once per second
 	BCSCTL3 = LFXT1S_2; // select VLO as the ACLK (used by the WDT)
-	WDTCTL = WDT_ADLY_1000; // sleep for one second
+	WDTCTL = WDT_ADLY_1000;
 	IE1 |= WDTIE;
 	__enable_interrupt(); // GIE not set in LPM3 bits?
 
@@ -229,6 +235,7 @@ int main(void)
 
 	while(1)
 	{
+		// go to sleep, to be woken up by the WDT interrupt in 3 seconds
 		LPM3;
 
 		// if the image is ready, then draw it and go back to sleep
@@ -239,9 +246,9 @@ int main(void)
 
 			// every so often, check in with the head node
 			// do so more often if we do not have a complete image
-			// watchdog triggers every second, so this is about
-			// once per minute
-			if ((timer & 0x3F) != 0)
+			// watchdog triggers every 3s, so this is about
+			// once every 768 seconds
+			if ((timer & 0xff) != 0)
 				continue;
 		}
 
@@ -249,25 +256,8 @@ int main(void)
 		while(check_for_updates(img_addr))
 			;
 
+		// turn the radio off before we go back to bed
 		radio_sleep();
-
-/*
-
-		short i = 0;
-		msg[i++] = '=';
-		msg[i++] = hexdigit(img_id >> 28);
-		msg[i++] = hexdigit(img_id >> 24);
-		msg[i++] = hexdigit(img_id >> 20);
-		msg[i++] = hexdigit(img_id >> 16);
-		msg[i++] = hexdigit(img_id >> 12);
-		msg[i++] = hexdigit(img_id >>  8);
-		msg[i++] = hexdigit(img_id >>  4);
-		msg[i++] = hexdigit(img_id >>  0);
-		msg[i++] = '!';
-
-		glyph_x = msg_i = msg_x = 0;
-		draw_msg();
-*/
 	}
 }
 
@@ -278,4 +268,3 @@ watchdog_timer(void)
 	timer++;
 	LPM3_EXIT;
 }
-
