@@ -35,8 +35,10 @@ static uint8_t flash_read_byte(void)
 	return spi_write(SPI_FLASH_CLK, 0, SPI_FLASH_DO, 0);
 }
 
-void flash_read(uint32_t addr, uint8_t * buf, uint8_t len)
+void flash_read(uint32_t addr, void * buf_ptr, uint8_t len)
 {
+	uint8_t * buf = buf_ptr;
+
 	pin_write(SPI_FLASH_CS, 0);
 	flash_write_byte(0x03);
 	flash_write_byte((addr >> 16) & 0xFF);
@@ -86,8 +88,13 @@ void flash_erase(uint32_t addr)
 		;
 }
 
-void flash_write(uint32_t addr, const uint8_t * buf, uint8_t len)
+void flash_write(uint32_t addr, const void * buf_ptr, uint8_t len)
 {
+	const uint8_t * buf = buf_ptr;
+
+	while (flash_status() & SPI_WIP)
+		;
+
 	flash_wren();
 
 	pin_write(SPI_FLASH_CS, 0);
@@ -100,8 +107,5 @@ void flash_write(uint32_t addr, const uint8_t * buf, uint8_t len)
 		flash_write_byte(buf[i]);
 
 	pin_write(SPI_FLASH_CS, 1);
-
-	while (flash_status() & SPI_WIP)
-		;
 }
 
