@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import secrets
-import sys
 
 def bitcount(x):
 	count = 0
@@ -23,27 +22,41 @@ def autocor(x):
 
 	return vals
 
+def mac(threshold=17):
+	while True:
+		x = (0x5 << 28) | secrets.randbits(28)
+		vals = autocor(x)
 
-threshold = 17
+		# check for goodness
+		fails = 0
+		avg = 0
+		for v in vals:
+			avg += v
+			if v > threshold:
+				fails += 1
+		if fails > 1:
+			continue
+#		print("%08x %.1f" % (x, avg / len(vals)))
+#		for x in range(0,32):
+#			for v in vals:
+#				if v < 32 - x:
+#					print(" ", end="")
+#				else:
+#					print("#", end="")
+#			print()
+		return x
 
-if len(sys.argv) > 1:
+if __name__ == "__main__":
+	import sys
+
+	if len(sys.argv) == 1:
+		mac()
+		sys.exit(0)
+
 	for x_arg in sys.argv[1:]:
 		x = int(x_arg,16)
 		vals = autocor(x)
-		print("%08x" % (x), vals)
-	sys.exit(0)
-
-while True:
-	x = (0x5 << 28) | secrets.randbits(28)
-	vals = autocor(x)
-
-	# check for goodness
-	fails = 0
-	for v in vals:
-		if v > threshold:
-			fails += 1
-	if fails > 1:
-		continue
-
-	print("%08x" % (x), vals)
-	break
+		avg = 0
+		for v in vals:
+			avg += v
+		print("%08x %.1f" % (x, avg / len(vals)), vals)

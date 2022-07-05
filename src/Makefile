@@ -14,7 +14,12 @@ CFLAGS=\
 
 all: epd
 
-epd: main.o epd.o font.o radio.o flash.o
+provision.h: FORCE
+	( cd ../server ; python3 ./provision.py ) > $@
+
+main.o: provision.h
+
+epd: main.o epd.o radio.o flash.o
 	$(CC) $(CFLAGS) -o $@ $^
 	$(SIZE) $@
 
@@ -23,3 +28,5 @@ epd: main.o epd.o font.o radio.o flash.o
 clean:
 	$(RM) *.o a.out core epd
 
+
+FORCE:

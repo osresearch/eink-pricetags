@@ -1,5 +1,6 @@
 #include <msp430.h>
 #include <stdint.h>
+#include <string.h>
 #include "epd.h"
 #include "flash.h"
 #include "radio.h"
@@ -8,6 +9,11 @@
 // incremented once per second
 static volatile uint32_t timer;
 
+extern const uint8_t boot_screen[];
+static const
+#include "provision.h"
+
+#if 0
 
 static char msg[16];
 static unsigned msg_i = 0;
@@ -62,6 +68,54 @@ void draw_msg(void)
 	epd_shutdown();
 }
 
+static char hexdigit(unsigned x)
+{
+	x &= 0xF;
+	if (x <= 9)
+		return '0' + x;
+	else
+		return 'A' + x - 0xa;
+}
+
+#endif
+
+void draw_image(const uint8_t * image, uint16_t len)
+{
+	epd_setup();
+	epd_reset();
+	epd_init();
+
+	epd_draw_start();
+
+	// decompress the RLE encoded value
+	uint8_t byte = 0;
+	uint8_t bits = 0;
+
+	for(uint16_t i = 0 ; i < len ; i++)
+	{
+		uint8_t enc = image[i];
+		uint8_t val = (enc >> 7) & 1; // is this a white or black pixel
+		uint8_t bit_len = (enc & 0x7F);
+		for(unsigned j = 0 ; j < bit_len ; j++)
+		{
+			byte = (byte << 1) | val;
+			bits = (bits + 1) & 7;
+			if (bits == 0)
+				epd_data(byte);
+		}
+	}
+
+	// clean up at the end
+	if (bits != 0)
+		epd_data(byte);
+
+	epd_display();
+	epd_shutdown();
+}
+
+static uint32_t img_id = 0;
+static uint8_t img_map[16];
+
 
 void draw_flash(uint16_t addr)
 {
@@ -85,33 +139,14 @@ void draw_flash(uint16_t addr)
 	epd_shutdown();
 }
 
-static char hexdigit(unsigned x)
-{
-	x &= 0xF;
-	if (x <= 9)
-		return '0' + x;
-	else
-		return 'A' + x - 0xa;
-}
-
 typedef struct {
-	uint8_t len;
-	uint32_t gw_id;
+	uint32_t tag_type;
 	uint32_t tag_id;
-	uint8_t channel;
-} radio_config_t;
-
-const radio_config_t config = {
-	.gw_id = 0x55abcdef,
-	.tag_id = 0x50123456,
-	.channel = 4,
-};
-
-typedef struct {
-	uint8_t len;
-	uint32_t tag_id;
+	uint32_t githash;
+	uint32_t install_date;
+	uint32_t reserved;
 	uint32_t img_id;
-	uint16_t offset; // in byte multiples
+	uint8_t img_map[16];
 }
 __attribute__((__packed__))
 msg_hello_t;
@@ -119,31 +154,31 @@ msg_hello_t;
 typedef struct {
 	uint32_t img_id;
 	uint16_t offset;
+	uint16_t reserved;
 	uint8_t data[32];
 }
 __attribute__((__packed__))
 msg_data_t;
 
-
-static uint32_t img_id = 0;
-static uint32_t img_offset = 0;
-
-static uint8_t msg_buf[64];
+static uint8_t msg_buf[40];
 
 int check_for_updates(uint32_t flash_addr)
 {
 	msg_hello_t * const hello = (void*) msg_buf;
-	hello->len = sizeof(*hello);
-	hello->tag_id = config.tag_id;
+	hello->tag_type = tag_type;
+	hello->tag_id = macaddr;
+	hello->githash = githash;
+	hello->install_date = install_date;
 	hello->img_id = img_id;
-	hello->offset = img_offset;
+
+	memcpy(hello->img_map, img_map, sizeof(hello->img_map));
 
 	// send a ping?
-	radio_tx(config.gw_id, (const void*) hello, 40); // sizeof(msg));
+	radio_tx(gateway, (const void*) hello, 40); // sizeof(msg));
 
-	// wait for a reply
+	// todo: wait for some number of reply
 	msg_data_t * const reply = (void *) msg_buf;
-	if (radio_rx(config.tag_id, (void*) reply, 40 /*sizeof(reply)*/, 10000) != 1)
+	if (radio_rx(macaddr, (void*) reply, 40 /*sizeof(reply)*/, 10000) != 1)
 		return -1;
 
 	// we have data!
@@ -151,23 +186,33 @@ int check_for_updates(uint32_t flash_addr)
 	{
 		// starting a new image
 		img_id = reply->img_id;
-		img_offset = 0;
+		memset(img_map, 0, sizeof(img_map));
 		flash_erase(flash_addr);
 	}
 
-	// unexpected packet? discard it
-	if (reply->offset != img_offset)
-		return 0;
+	// the img_map stores based on 32-byte packets,
+	// so shift by 5 to find packet number, then by 3 to get byte into map
+	const uint16_t img_offset = reply->offset;
+	const uint8_t byte_num = (img_offset >> 5) >> 3;
+	const uint8_t bit_num = 1 << ((img_offset >> 5) & 7);
+
+	// todo: validate byte_num, img_offset, etc
+	// todo: write image map into flash
+	img_map[byte_num] |= bit_num;
 
 	flash_write(flash_addr + img_offset, reply->data, sizeof(reply->data));
-	img_offset += sizeof(reply->data);
 
-#define IMG_SIZE 4000
+	// check to see if we have all the parts
+	for(unsigned i = 0 ; i < 125 ; i++)
+	{
+		const uint8_t b = img_map[i >> 3];
+		const uint8_t bit = 1 << (i & 7);
+		if ((b & bit) == 0)
+			return 0;
+	}
 
-	if (img_offset >= IMG_SIZE)
-		return 1;
-
-	return 0;
+	// all the fields are filled in!
+	return 1;
 }
 
 int main(void)
@@ -176,12 +221,13 @@ int main(void)
 
 	WDTCTL = WDTPW + WDTHOLD; // Stop WDT
 
-	// read the image from flash
+	// draw the boot screen, not the flash image for the first second
+	draw_image(bootscreen, bootscreen_len);
+
 	flash_init();
-	draw_flash(flash_addr);
 
 	// configure the radio, then let it turn off again
-	radio_init(config.channel);
+	radio_init(channel);
 	radio_sleep();
 
 	// setup the watchdog to trigger every second
