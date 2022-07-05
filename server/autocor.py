@@ -22,20 +22,31 @@ def autocor(x):
 
 	return vals
 
-def mac(threshold=17):
+def mac(prefix=0x5, threshold=17, debug=False):
 	while True:
-		x = (0x5 << 28) | secrets.randbits(28)
+		x = (prefix << 28) | secrets.randbits(28)
 		vals = autocor(x)
 
 		# check for goodness
 		fails = 0
+		almost_fails = 0
 		avg = 0
 		for v in vals:
 			avg += v
 			if v > threshold:
 				fails += 1
-		if fails > 1:
+			elif v >= threshold:
+				almost_fails += 1
+		if fails > 1 or almost_fails > 2:
 			continue
+
+		if not debug:
+			return x
+
+		avg = 0
+		for v in vals:
+			avg += v
+		print("%08x %.1f" % (x, avg / len(vals)), vals)
 #		print("%08x %.1f" % (x, avg / len(vals)))
 #		for x in range(0,32):
 #			for v in vals:
@@ -50,7 +61,9 @@ if __name__ == "__main__":
 	import sys
 
 	if len(sys.argv) == 1:
-		mac()
+		while True:
+			#print("%08x" % (mac(prefix=0xa)))
+			mac(prefix=0xa, debug=True)
 		sys.exit(0)
 
 	for x_arg in sys.argv[1:]:

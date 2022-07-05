@@ -29,7 +29,7 @@ now_str = now.strftime("%Y%m%d-%H%M")
 now_sec = now.strftime("%s")
 tag_type = 0x02500120
 channel = 4
-gw = "59abcdef"
+gw = "aed8e4fd"
 mac = "%08x" % (autocor.mac(threshold=18))
 extra = subprocess.run(["git","rev-parse","--short","HEAD"], capture_output=True).stdout.decode('utf-8').rstrip()
 

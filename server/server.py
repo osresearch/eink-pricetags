@@ -8,7 +8,7 @@ def now():
     return datetime.now().strftime("%Y%M%d-%H%M%S")
 
 class eink_server:
-    def __init__(self, gateway_id=0x59abcdef, channel=4):
+    def __init__(self, gateway_id=0xaed8e4fd, channel=4):
         self.radio = a7106.A7106(channel=channel, id=gateway_id, packet_len=40)
 
         self.gateway_id = gateway_id
