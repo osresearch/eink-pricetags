@@ -2,6 +2,7 @@ import a7106
 import struct
 import time
 import hashlib
+from threading import Thread
 from datetime import datetime
 
 def now():
@@ -12,6 +13,7 @@ class eink_server:
         self.radio = a7106.A7106(channel=channel, id=gateway_id, packet_len=40)
 
         self.gateway_id = gateway_id
+        self.img_id = 0
         #self.radio.set_id(self.gateway_id)
 
     def serve(self):
@@ -28,19 +30,20 @@ class eink_server:
                 [tag_type,client_id,githash,install_date,reserved,img_id] = struct.unpack('<IIIIII',data[0:24])
                 img_map = data[24:]
 
+                new = False
                 if not client_id in clients:
                     clients[client_id] = {
                         'rx_count': 0,
                         'img_id': img_id,
 		    }
-                    print(now(), "%08x: New client type %08x hash %08x" % (client_id, tag_type, githash))
+                    new = True
                 clients[client_id]['rx_count'] += 1
 
                 offset = None
                 flags = 0
                 if img_id != self.img_id:
                     # they have a different image
-                    print(now(), '%08x: old image!' % (client_id))
+                    #print(now(), '%08x: old image!' % (client_id))
                     offset = 0
                 else:
                     # find the first not present packet in the image
@@ -63,6 +66,8 @@ class eink_server:
                 self.radio.transmit(
                   struct.pack("<IHH", self.img_id, offset, flags) + self.image[offset:offset+32])
 
+                if new:
+                    print(now(), "%08x: New client type %08x hash %08x" % (client_id, tag_type, githash))
                 if (flags & 1) == 0:
                     print(now(), '%08x: %08x offset %d' % (client_id, img_id, offset))
                 else:
@@ -72,11 +77,23 @@ class eink_server:
             except Exception as e:
                 print(now(), e)
 
+def monitor_files(server):
+    while True:
+        try:
+            with open("hello.raw", "rb") as f:
+                img = f.read()
+            img_id = int(hashlib.sha256(img).digest()[0:4].hex(), 16)
+            if server.img_id == img_id:
+               time.sleep(1)
+               continue
+            server.image = img
+            server.img_id = img_id
+            print(now(), 'image id %08x' %(server.img_id))
+        except Exception as e:
+            print(now(), e)
+
 server = eink_server()
+fs_thread = Thread(target=monitor_files, args=(server,))
 
-with open("hello.raw", "rb") as f:
-    server.image = f.read()
-server.img_id = int(hashlib.sha256(server.image).digest()[0:4].hex(), 16)
-print(now(), 'image id %08x' %(server.img_id))
-
+fs_thread.start()
 server.serve()
