@@ -2,6 +2,8 @@ import a7106
 import struct
 import time
 import hashlib
+import os
+from PIL import Image, ImageFont, ImageDraw, ImageOps
 from threading import Thread
 from datetime import datetime
 
@@ -77,23 +79,45 @@ class eink_server:
             except Exception as e:
                 print(now(), e)
 
-def monitor_files(server):
-    while True:
-        try:
-            with open("hello.raw", "rb") as f:
-                img = f.read()
-            img_id = int(hashlib.sha256(img).digest()[0:4].hex(), 16)
-            if server.img_id == img_id:
-               time.sleep(1)
-               continue
-            server.image = img
-            server.img_id = img_id
-            print(now(), 'image id %08x' %(server.img_id))
-        except Exception as e:
-            print(now(), e)
+def monitor_files(server, filename):
+	last_mtime = 0
+	while True:
+		try:
+			st = os.stat(filename)
+			if st.st_mtime == last_mtime:
+				time.sleep(1)
+				continue
+			last_mtime = st.st_mtime
+
+			img = Image.open(filename)
+
+			# rotate it clockwise if the wrong orientation
+			if img.width > img.height:
+				img = img.rotate(-90, expand=True)
+
+			# shrink it to fit
+			if img.width != 128 or img.height != 250:
+				img = img.resize((128,250))
+
+			# convert it to 1 channel
+			if img.mode != "1":
+				img = img.convert(mode="1") #, dither=Image.Dither.FLOYDSTEINBERG)
+
+			# convert it to raw bytes
+			img = ImageOps.flip(img).tobytes()
+			img_id = int(hashlib.sha256(img).digest()[0:4].hex(), 16)
+			if server.img_id == img_id:
+				time.sleep(1)
+				continue
+			server.image = img
+			server.img_id = img_id
+			print(now(), 'image id %08x' %(server.img_id))
+		except Exception as e:
+			print(now(), e)
+			time.sleep(5)
 
 server = eink_server()
-fs_thread = Thread(target=monitor_files, args=(server,))
+fs_thread = Thread(target=monitor_files, args=(server,"hello.png"))
 
 fs_thread.start()
 server.serve()
