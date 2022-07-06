@@ -12,7 +12,7 @@ width = 128  # actual 122, but padded
 # 1 bit per pixel for the output
 img = Image.new("1", (width,height))
 #font_big = ImageFont.truetype("fonts/IBMPlexMono-Bold.ttf", 40)
-font_big = ImageFont.truetype("fonts/Anonymous Pro B.ttf", 40)
+font_big = ImageFont.truetype("fonts/Anonymous Pro B.ttf", 38)
 font_small = ImageFont.truetype("fonts/Anonymous Pro.ttf", 14)
 
 def draw_text(img,x,y,msg,font):

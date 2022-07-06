@@ -29,8 +29,9 @@ class eink_server:
 		# received the hello message
                 #print('got packet, data_length={} data={}'.format(len(data), data))
 
-                [tag_type,client_id,githash,install_date,reserved,img_id] = struct.unpack('<IIIIII',data[0:24])
+                [tag_type,client_id,githash,install_date,voltage,reserved,img_id] = struct.unpack('<IIIIHHI',data[0:24])
                 img_map = data[24:]
+                voltage = voltage * 5.0 / 1024
 
                 new = False
                 if not client_id in clients:
@@ -71,9 +72,9 @@ class eink_server:
                 if new:
                     print(now(), "%08x: New client type %08x hash %08x" % (client_id, tag_type, githash))
                 if (flags & 1) == 0:
-                    print(now(), '%08x: %08x offset %d' % (client_id, img_id, offset))
+                    print(now(), '%08x: %08x offset %d voltage %.2f' % (client_id, img_id, offset, voltage))
                 else:
-                    print(now(), '%08x: %08x complete' % (client_id, img_id))
+                    print(now(), '%08x: %08x complete voltage %.2f' % (client_id, img_id, voltage))
 
             #except a7106.RxError as e:
             except Exception as e:

@@ -9,6 +9,42 @@
 // incremented once per second
 static volatile uint16_t timer;
 
+// read the battery voltage via the Vcc/2 input to the ADC
+uint16_t battery_voltage(void)
+{
+	// measure ADC channel 11 (Vcc/2) with 2.5V reference
+	// this is good for Vcc up to 5V, and the scale factor is 5.0/1024
+	// https://www.ti.com/lit/an/slaa828b/slaa828b.pdf
+	ADC10CTL0 = 0
+		| SREF_1	// Vr+ = Vref, Vr = Vss
+		| REF2_5V	// Vref = 2.5V
+		| REFON		// Turn on the reference generator
+		| ADC10SHT_2	// 16 ADC clocks
+		| ADC10SR	// "reduces curennt consumption of buffer"
+		| ADC10ON	// turns on the ADC
+		;
+
+	ADC10CTL1 = 0
+		| INCH_11	// (Vcc-Vss)/2
+		| SHS_0		// Sample-and-hold source ADC10SC bit
+		| ADC10DIV_0	// no ADC clock divider
+		//| ADC10SSEL_0	// ADC clock is ADC10OSC (0.131 mA)
+		| ADC10SSEL_2	// ADC clock is MCLK is lower power (0.026mA)
+		;
+
+	// enable conversion and start conversion
+	ADC10CTL0 |= ENC | ADC10SC;
+
+	// busy wait for conversion to complete
+	while (ADC10CTL1 & ADC10BUSY)
+		;
+
+	// turn off the ADC and reference voltage
+	ADC10CTL0 &= ~(ENC | ADC10IFG | ADC10ON | REFON);
+
+	return ADC10MEM;
+}
+
 // re-generated during the build process
 #include "provision.h"
 
@@ -134,7 +170,8 @@ typedef struct {
 	uint32_t tag_id;
 	uint32_t githash;
 	uint32_t install_date;
-	uint32_t reserved;
+	uint16_t voltage;
+	uint16_t reserved;
 	uint32_t img_id;
 	uint8_t img_map[16];
 }
@@ -161,6 +198,7 @@ int check_for_updates(uint32_t flash_addr)
 	hello->tag_id = macaddr;
 	hello->githash = githash;
 	hello->install_date = install_date;
+	hello->voltage = battery_voltage();
 	hello->img_id = img.id;
 
 	memcpy(hello->img_map, img.map, sizeof(hello->img_map));
