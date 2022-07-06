@@ -6,3 +6,6 @@ epd
 src/provision.h
 __pycache__
 tags
+*.log
+*.bin
+*.so
